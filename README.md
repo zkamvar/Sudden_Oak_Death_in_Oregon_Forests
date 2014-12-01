@@ -1,5 +1,12 @@
 # Analysis of *P. ramorum* epidemic isolates
 
+Citation
+========
+Please use the following DOI to cite this data and associated functions/analyses.
+
+[![DOI](https://zenodo.org/badge/doi/10.5281/zenodo.13007.svg)](http://dx.doi.org/10.5281/zenodo.13007)
+
+
 R markdown files
 ========
 
