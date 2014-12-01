@@ -1,0 +1,148 @@
+---
+title: "Population structure 2: $G_{st}$ in the machine"
+author: "Zhian N. Kamvar"
+date: "September 30, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document will explore pairwise $G_{st}$ among populations. The funcion
+`pairwise_Gst_Nei` from the package *mmod* will be utilized for these 
+calculations and a heatmap will be drawn. 
+
+To make sure that we aren't making any comparisons with populations of sample
+size of 1, **we are setting the minimum sample size to be 10**. 
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(reshape2)
+library(ggplot2)
+library(poppr)
+library(adegenet)
+library(mmod)
+options(stringsAsFactors = FALSE)
+data(ramdat)
+data(pop_data)
+data(myPal)
+sessionInfo()
+myTheme <- theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+Custom Function
+--------
+
+```{r}
+heat_gst <- function(gst){
+  gst.df <- melt(as.matrix(gst), value.name = "Gst")
+  outPlot <- ggplot(gst.df, aes(x = factor(Var1), y = factor(Var2), fill = Gst)) +
+    geom_tile() +
+    theme_classic() +
+    myTheme +
+    scale_fill_gradient2(low = "blue", high = "yellow", mid = "black") +
+    xlab("") +
+    ylab("") +
+    labs(fill = expression("G[st]")) +
+    scale_y_discrete(expand = c(0, 0)) +
+    scale_x_discrete(expand = c(0, 0))
+  return(outPlot)
+}
+
+get_gst <- function(x) Gst_Nei(selPopSize(x, n = 10))
+
+Gst_heatmap <- function(x){
+  gst <- pairwise_Gst_Nei(selPopSize(x, n = 10))
+  plot <- heat_gst(gst)
+  return(plot)
+}
+```
+
+$G_{st}$ heatmaps by population
+-------
+
+```{r, by_year, cache=TRUE, fig.height = 7, fig.width = 10}
+get_gst(ramdat)
+Gst_heatmap(ramdat)
+```
+
+```{r, by_Zone, cache = TRUE, fig.height = 7, fig.width = 10}
+get_gst(setpop(ramdat, ~ZONE2))
+Gst_heatmap(setpop(ramdat, ~ZONE2))
+get_gst(setpop(ramdat, ~ZONE1))
+Gst_heatmap(setpop(ramdat, ~ZONE1))
+```
+
+```{r, by_year_no_seb, cache = TRUE, fig.height = 7, fig.width = 10}
+noseb <- popsub(setpop(ramdat, ~ZONE2), blacklist = "HunterCr")
+get_gst(setpop(noseb, ~Pop))
+Gst_heatmap(setpop(noseb, ~Pop))
+```
+
+```{r, by_Zone_no_seb, cache = TRUE, fig.height = 7, fig.width = 10}
+
+get_gst(setpop(noseb, ~ZONE2))
+Gst_heatmap(setpop(noseb, ~ZONE2))
+
+get_gst(setpop(noseb, ~ZONE1))
+Gst_heatmap(setpop(noseb, ~ZONE1))
+```
+
+
+$G_{st}$ heatmaps by population and year
+------
+
+These heatmaps will be organized by population and year, but they are 
+sorted by year. Lines will be placed demarking the year so that within 
+year $G_{st}$ can be compared. 
+
+
+```{r, by_Zoneyear, cache = TRUE, fig.height = 7, fig.width = 10}
+get_gst(setpop(ramdat, ~ZONE2/Pop))
+
+z2 <- Gst_heatmap(setpop(ramdat, ~ZONE2/Pop))
+z2labs <- sub("^.+?_20", "20", unique(z2$data$Var1))
+intercepts <- (which(!duplicated(z2labs)) - 0.5)[-1]
+
+z2 + geom_vline(xintercept = intercepts, color = "white", size = 1.5) + 
+  geom_hline(yintercept = intercepts, color = "white", size = 1.5)
+
+get_gst(setpop(ramdat, ~ZONE1/Pop))
+z1 <- Gst_heatmap(setpop(ramdat, ~ZONE1/Pop))
+z1labs <- sub("^.+?_20", "20", unique(z1$data$Var1))
+intercepts <- (which(!duplicated(z1labs)) - 0.5)[-1]
+
+z1 + geom_vline(xintercept = intercepts, color = "white", size = 1.5) + 
+  geom_hline(yintercept = intercepts, color = "white", size = 1.5)
+```
+
+
+```{r, by_Zoneyear_no_seb, cache = TRUE, fig.height = 7, fig.width = 10}
+
+get_gst(setpop(noseb, ~ZONE2/Pop))
+z2 <- Gst_heatmap(setpop(noseb, ~ZONE2/Pop))
+z2labs <- sub("^.+?_20", "20", unique(z2$data$Var1))
+intercepts <- (which(!duplicated(z2labs)) - 0.5)[-1]
+
+z2 + geom_vline(xintercept = intercepts, color = "white", size = 1.5) + 
+  geom_hline(yintercept = intercepts, color = "white", size = 1.5)
+
+get_gst(setpop(noseb, ~ZONE1/Pop))
+z1 <- Gst_heatmap(setpop(noseb, ~ZONE1/Pop))
+z1labs <- sub("^.+?_20", "20", unique(z1$data$Var1))
+intercepts <- (which(!duplicated(z1labs)) - 0.5)[-1]
+
+z1 + geom_vline(xintercept = intercepts, color = "white", size = 1.5) + 
+  geom_hline(yintercept = intercepts, color = "white", size = 1.5)
+```
+
+
+

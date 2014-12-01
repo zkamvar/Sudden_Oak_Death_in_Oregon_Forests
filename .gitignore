@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+bigplots
+maps.html
+maps_cache/*
+maps_files/*
+ggmapTemp.png
+packrat/lib*/

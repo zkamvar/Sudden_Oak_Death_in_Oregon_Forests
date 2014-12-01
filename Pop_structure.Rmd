@@ -1,0 +1,125 @@
+---
+title: "Population structure"
+author: "Zhian N. Kamvar"
+date: "September 30, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document will explore population clustering with bootstrapping. This will
+demonstrate to some degree the differentiation between populations.
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(reshape2)
+library(ggplot2)
+library(ape)
+library(poppr)
+library(adegenet)
+library(igraph)
+options(stringsAsFactors = FALSE)
+data(ramdat)
+data(pop_data)
+data(myPal)
+sessionInfo()
+```
+
+
+Custom Function
+------
+```{r}
+neiboot <- function(x, sample = 1000, color_by = "black"){
+  x <- genind2genpop(x, quiet = TRUE)
+  outTree <- aboot(x, sample = sample, cutoff = 50, quiet = TRUE, tree = "nj",
+                   showtree = FALSE)
+  plot.phylo(outTree, xpd = TRUE, font = 2, cex = 0.8, type = "u",
+             label.offset = 0.005, adj = 0, tip.col = color_by)
+  nodelabels(outTree$node.label, xpd = TRUE, frame = "n", cex = 0.8, font = 3)#,
+#              adj = c(1.3, -0.5))
+#   axisPhylo(3)
+  add.scale.bar(lwd = 5)
+  return(outTree)
+}
+```
+
+
+Population level dendrograms
+--------
+
+First, I will take a look at what the different population factors reveal.
+
+```{r, pop, fig.height = 15, fig.width = 10, cache=TRUE}
+par(mfrow = c(3, 1))
+system.time(neiboot(ramdat))
+system.time(neiboot(setpop(ramdat, ~ZONE2)))
+system.time(neiboot(setpop(ramdat, ~ZONE1)))
+par(mfrow = c(1, 1))
+```
+
+We can see that Cape Sebastian/Hunter's Creek is creating strong outgroups.
+I will run the analyses on the different zones without these populations.
+
+```{r, pop_no_seb, fig.height = 10, fig.width = 10, cache = TRUE}
+par(mfrow = c(2, 1))
+system.time(neiboot(popsub(setpop(ramdat, ~ZONE2), blacklist = "HunterCr")))
+system.time(neiboot(popsub(setpop(ramdat, ~ZONE1), blacklist = "CapeSeb")))
+par(mfrow = c(1, 1))
+```
+
+### Population dendrograms by year
+
+Now we want to analyze the populations by year. These will be colored by Zone2
+since that is the top level of the hierarchy.
+
+#### With Cape Sebastian
+
+```{r, popyear, fig.height = 15, fig.width = 10, cache = TRUE}
+par(mfrow = c(2, 1))
+
+Z2    <- setpop(ramdat, ~ZONE2)
+Z2Pal <- char2pal(Z2@pop.names)
+setpop(ramdat) <- ~ZONE2/Pop
+set.seed(9001)
+system.time(outtree <- neiboot(ramdat, sample = 10000,
+                               color_by = Z2Pal[sub("_.+?$", "", ramdat@pop.names)]))
+
+setpop(ramdat) <- ~ZONE2/ZONE1/Pop
+set.seed(9001)
+system.time(neiboot(ramdat, sample = 10000, 
+                    color_by = Z2Pal[sub("_.+?$", "", ramdat@pop.names)]))
+
+par(mfrow = c(1, 1))
+
+write.nexus(outtree, file = "zone_by_year.nex")
+```
+
+#### Without Cape Sebastian
+
+```{r, popyear_no_seb, fig.height = 15, fig.width = 10, cache = TRUE}
+
+par(mfrow = c(2, 1))
+
+ramdat <- popsub(setpop(ramdat, ~ZONE2/Pop), blacklist = "HunterCr_2011")
+Z2     <- setpop(ramdat, ~ZONE2)
+Z2Pal  <- char2pal(Z2@pop.names)
+setpop(ramdat) <- ~ZONE2/Pop
+system.time(neiboot(ramdat, color_by = Z2Pal[sub("_.+?$", "", ramdat@pop.names)]))
+
+ramdat <- popsub(setpop(ramdat, ~ZONE1/Pop), blacklist = "CapeSeb_2011")
+setpop(ramdat) <- ~ZONE2/ZONE1/Pop
+system.time(neiboot(ramdat, color_by = Z2Pal[sub("_.+?$", "", ramdat@pop.names)]))
+
+par(mfrow = c(1, 1))
+
+
+```

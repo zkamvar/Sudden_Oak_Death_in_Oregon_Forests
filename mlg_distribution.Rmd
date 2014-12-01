@@ -1,0 +1,236 @@
+---
+title: "MLG distribution and filtering"
+author: "Zhian N. Kamvar"
+date: "September 25, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document will explore the distribution of MLGs across years as well as
+filtering strategies.
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(reshape2)
+library(ggplot2)
+library(ape)
+library(poppr)
+library(adegenet)
+options(stringsAsFactors = FALSE)
+data(ramdat)
+data(pop_data)
+data(myPal)
+devtools::source_gist(2877821)
+sessionInfo()
+```
+
+Analysis of unfiltered data
+------
+
+## Basic Barplots
+First thing to do is to look at the distribution of the MLGs per year.
+
+```{r}
+ramdat@other$oldmlg <- mlg.vector(ramdat)
+(unfiltered <- mlg.table(ramdat, total = TRUE))
+totplot <- last_plot()
+```
+
+
+## Heatmaps
+
+```{r, fig.height=10, fig.width=7}
+options(digits = 10)
+(newReps <- other(ramdat)$REPLEN)
+newReps[3] <- 4
+(newReps <- fix_replen(ramdat, newReps))
+mlg.heatmap(unfiltered)
+mlg.barplot(unfiltered, pal = myPal)
+uf <- unfiltered[-nrow(unfiltered), ]
+mlg.barplot(uf[rowSums(uf) > 10, ], total = FALSE, pal = myPal)
+```
+
+```{r}
+setpop(ramdat) <- ~ZONE1
+zones <- mlg.table(ramdat, bar = FALSE)
+```
+```{r, fig.height = 10, fig.width = 10}
+# mlg.heatmap(zones)
+mlg.barplot(zones, pal = myPal)
+setpop(ramdat) <- ~Pop
+```
+
+
+```{r, fig.height = 11, fig.width = 3}
+(bars <- ggplot(totplot$data, aes(x = MLG, y = count, fill = MLG)) + 
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 160)) +
+  scale_fill_manual(values = myPal) +
+  guides(fill = guide_legend(ncol = 2, title = NULL, )) +
+  geom_text(aes(label = count), size = 2.5, hjust = 0, font = "bold") +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+        #element_text(angle = -45, vjust = 1, hjust = 0, size = 5),
+        #legend.position = c(1, 0), legend.direction = "vertical",
+        legend.position = "none",
+        legend.text = element_text(size = rel(0.65)),
+        legend.justification = c(1, 0),
+        legend.background = element_rect(color = "black"),
+        legend.margin = grid::unit(0, "pt"),
+        legend.key.size = grid::unit(15, "pt"),
+        text = element_text(family = "Helvetica"),
+        axis.title.y = element_blank()) + 
+  scale_x_discrete(limits = rev(totplot$data$MLG)) +
+  coord_flip())
+# ggsave("mlg_dist.svg", plot = set_panel_size(bars, 
+#                                              width = unit(3, "in"),
+#                                              height = unit(12, "in")),
+#        width = 6, height = 15)
+
+
+# ggsave("mlg_dist_ppt.svg", 
+#        plot = set_panel_size(bars, width = unit(30*1.2, "mm"), 
+#                              height = unit(225*1.2, "mm")),
+#        width = 88,
+#        height = 250, 
+#        units = "mm", 
+#        family = "Helvetica", 
+#        scale = 1.2,
+#        pointsize = 12)
+```
+
+
+Get a sense of when these arose:
+
+```{r, fig.height = 12, fig.width = 4}
+ramdat.cc <- clonecorrect(ramdat, hier = NA)
+
+rangers <- mlg.crosspop(ramdat, mlgsub = unique(ramdat@mlg), df = TRUE, quiet = TRUE)
+names(rangers)[2] <- "Year"
+rangers$MLG <- factor(rangers$MLG, levels = colnames(unfiltered))
+
+(ranges <- ggplot(rangers, aes(x = Year, y = MLG, group = MLG)) + 
+  geom_line(aes(color = MLG), size = 1, linetype = 1) + 
+  geom_point(aes(color = MLG), size = 5, pch = 21, fill = "white") +
+  geom_text(aes(label = Count), size = 2.5) + 
+  scale_color_manual(values = myPal) + 
+  guides(color = guide_legend(ncol = 3)) +
+  ylab("Multilocus Genotype") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        text = element_text(family = "Helvetica"),
+        legend.position = "none",
+        axis.line = element_line(colour = "black")) +
+#   theme(panel.grid.major.y = element_line(size = 0.5, color = "grey")) +
+#   theme(panel.grid.major.x = element_line(size = 1, color = "grey")) + 
+  scale_y_discrete(limits = rev(totplot$data$MLG)))
+  
+# ggsave("mlg_range.svg", plot = set_panel_size(bars, 
+#                                               width = unit(5, "in"),
+#                                               height = unit(12, "in")),
+#        width = 6, height = 15)
+
+
+# ggsave("mlg_range_ppt.svg", 
+#        plot = set_panel_size(ranges, width = unit(44*1.2, "mm"),
+#                              height = unit(225*1.2, "mm")),
+#        width = 88, height = 250, units = "mm", family = "Helvetica", 
+#        pointsize = 12, scale = 1.2)
+
+pamat     <- unfiltered > 0
+pamat     <- pamat[-nrow(pamat), ]
+timetable <- MLG_range(pamat)
+
+origin.df <- data.frame(timetable[paste("MLG", ramdat.cc@mlg, sep = "."), ])
+origin.df$MLG <- rownames(origin.df)
+counts <- unfiltered["Total", origin.df$MLG]
+origin.df$newMLG <- paste(origin.df$first, pad_zeroes(1:nrow(origin.df)), sep = ".")
+```
+
+
+Trees
+------
+
+
+Now that we have this information, obtaining a bootstrapped dendrogram would be
+good. Bruvo's distance would be a good choice since this is a clonal epidemic
+and we would expect mutations in a stepwise fashion.
+
+```{r, tree, cache=TRUE}
+set.seed(5555)
+system.time(njtree <- bruvo.boot(ramdat, replen = newReps,#other(ramdat)$REPLEN, 
+                                 sample = 100, quiet = TRUE, showtree = FALSE,
+                                 tree = "nj")
+            )
+```
+
+```{r, fig.height=30, fig.width = 6}
+njtree$tip.label <- paste("MLG", ramdat@mlg, sep = ".")
+njtree <- ladderize(njtree)
+plot.phylo(njtree, cex = 0.8, font = 2, adj = 0, xpd = TRUE, 
+           label.offset = 1/800, tip.col = myPal[ramdat@mlg])
+nodelabels(ifelse(njtree$node.label > 50, njtree$node.label, NA), 
+           adj = c(1.3, -0.5), frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+```
+
+```{r, tree_lite, cache=TRUE}
+set.seed(5001)
+system.time(njtree.cc <- bruvo.boot(ramdat.cc, replen = newReps,#other(ramdat)$REPLEN, 
+                                 sample = 1000, quiet = TRUE, showtree = FALSE, 
+                                 tree = "nj")
+            )
+```
+
+```{r, fig.height=15, fig.width = 10}
+njtree.cc$tip.label <- paste(origin.df$newMLG, origin.df$MLG, sep = "_")
+names(myPal) <- njtree.cc$tip.label[order(mlgFromString(origin.df$MLG))]
+yearPal <- deepseasun(nrow(pamat))
+names(yearPal) <- rownames(pamat)
+njtree.cc <- ladderize(njtree.cc)
+par(mfrow = c(1, 2))
+plot.phylo(njtree.cc, cex = 0.8, font = 2, xpd = TRUE,  adj = 0,
+           tip.col = yearPal[substr(njtree.cc$tip.label, 1, 4)])
+nodelabels(ifelse(njtree.cc$node.label > 50, njtree.cc$node.label, NA), 
+           adj = c(1.3, -0.5), 
+           frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+
+legend("bottomright", fill = yearPal, legend = names(yearPal), bty = "n", 
+       title = "Year first\nisolated",
+       cex = 0.75,)
+
+
+plot.phylo(njtree.cc, cex = 0.8, font = 2, xpd = TRUE,  adj = 0,
+           tip.col = myPal[njtree.cc$tip.label])
+nodelabels(ifelse(njtree.cc$node.label > 50, njtree.cc$node.label, NA), 
+           adj = c(1.3, -0.5), 
+           frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+
+
+par(mfrow = c(1, 1))
+```
+
+```{r, cophylo, fig.width = 10, fig.height = 30}
+njtree.cc$tip.label <- origin.df$MLG
+names(myPal) <- origin.df$MLG[order(mlgFromString(origin.df$MLG))]
+assoc <- matrix(c(njtree$tip.label, njtree$tip.label), ncol = 2)
+cophyloplot(njtree, njtree.cc, assoc, use.edge.length = FALSE, space = 1000,
+            show.tip.label = FALSE, 
+            col = myPal[assoc[, 1]], lwd = 3, gap = 1)
+```
+

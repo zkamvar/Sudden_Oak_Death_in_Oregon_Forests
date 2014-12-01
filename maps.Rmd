@@ -1,0 +1,273 @@
+---
+title: "maps"
+author: "Zhian N. Kamvar"
+date: "September 25, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-----
+
+This document is simply to generate maps for the progression of the epidemic in
+Curry County, OR. The html file will not be uploaded to github as it is too
+large.
+
+
+Required packages and data
+--------
+
+### Packages
+
+```{r}
+library(PramCurry)
+library(dplyr)
+library(ggmap)
+library(rgdal)
+library(poppr)
+# library(jpeg)
+# library(plyr)
+# devtools::source_url("https://raw.githubusercontent.com/dkahle/ggmap/master/R/file_drawer.R")
+# devtools::source_url("https://raw.githubusercontent.com/dkahle/ggmap/master/R/get_stamenmap.R")
+sessionInfo()
+options(stringsAsFactors = FALSE)
+```
+
+### Data and functions
+
+```{r, data_load, cache=TRUE}
+data(ramdat)
+data(pop_data)
+data(myPal)
+names(myPal) <- mlgFromString(names(myPal))
+plotlist  <- list()
+years     <- unique(pop_data$YEAR)
+
+get_location <- function(LON, LAT){
+  return(c(lon = mean(range(LON, na.rm = TRUE)), 
+           lat = mean(range(LAT, na.rm = TRUE))))
+}
+
+get_bb <- function(LON, LAT){
+  long <- range(LON, na.rm = TRUE)
+  lat  <- range(LAT, na.rm = TRUE)
+  return(c(left = long[1], bottom = lat[1], 
+           right = long[2], top = lat[2]))
+}
+# Base map
+# brookings <- get_stamenmap(get_bb(pop_data$LON, pop_data$LAT),
+#                      maptype = "terrain",
+#                      zoom = 8)
+
+brookings <- get_googlemap(get_location(pop_data$LON, pop_data$LAT), 
+                           color = "bw",
+                           maptype = "terrain", 
+                           scale = 2, 
+                           zoom = 10,
+                           filename = "bigmap")
+
+theline <- data.frame(list(alat = 42.013522, alon = -124.368457, 
+             blat = 42.013522, blon = -124.27061))
+```
+
+### Get Shapefiles
+
+```{r, shapes, cache = TRUE}
+read_and_fortify <- function(path, shape){
+  path <- path.expand(path)
+  x <- readOGR(path, shape)
+  x <- spTransform(x, CRS("+proj=longlat +datum=WGS84"))
+  x <- fortify(x)
+  return(x)
+}
+
+ZONE1 <- read_and_fortify("./shapefiles", "GEN_ZONE_1")
+
+ZONE2 <- read_and_fortify("./shapefiles", "GEN_ZONE_2")
+TREES <- spTransform(readOGR("./shapefiles/", "SOD_POS_2001_2014_20141002"), 
+                     CRS("+proj=longlat +datum=WGS84"))@data[-5]
+OREGON <- read_and_fortify("./shapefiles", "states")
+OREGON <- filter(OREGON, id == 11)
+
+ZONE2$id <- as.factor(ZONE2$id)
+levels(ZONE2$id) <- c("HunterCr", "PistolR", "PistolRSF", "NFChetHigh", 
+                      "JHallCr", "Coast", "ChetcoMain", "Winchuck")
+my_coord_map <- function(x){
+  heybb <- attr(x, "bb")
+  return(coord_map(projection = "mercator", 
+                   xlim = c(heybb$ll.lon, heybb$ur.lon),
+                   ylim = c(heybb$ll.lat, heybb$ur.lat))
+         )
+}
+
+get_coord_map <- function(long, lat){
+  return(coord_map(projection = "mercator", 
+                   xlim = range(long), 
+                   ylim = range(lat))
+         )
+}
+curr_co_bb <- coord_map(projection = "mercator", 
+                        xlim = range(ZONE2$long),
+                        ylim = range(ZONE2$lat)
+                        )
+
+add_points <- function(df, color = "yellow", size = 5){
+  aesthetics <- aes(x = LONG, y = LAT)
+  return(geom_point(aesthetics, alpha = 0.2, size = size, data = df, pch = 3,
+                    color = color))
+}
+
+```
+
+
+
+
+### Create plots and show
+
+```{r, maps, fig.height = 10, fig.width = 10, cache=TRUE}
+ORmap  <- get_googlemap(get_location(OREGON$long, OREGON$lat), zoom = 4, 
+                        maptype = "hybrid", scale = 2)
+ORlay  <- ggplot(aes(x = long, y = lat), data = OREGON)
+ORgg   <- ggmap(ORmap, base_layer = ORlay, maprange = TRUE, "device")
+ORbb   <- get_coord_map(OREGON$long, OREGON$lat)
+curr_co_poly.df <- data.frame(x = rep(curr_co_bb$limits$x, each = 2), 
+                              y = rep(curr_co_bb$limits$y, each = 2)[c(3, 1:2, 4)])
+ORinset <- ORgg + 
+  geom_polygon(aes(x = long, y = lat), 
+               data = OREGON, alpha = 0.5, 
+               fill = "white", color = "black") +
+  geom_point(aes(x = lon, y = lat), 
+             data = data.frame(as.list(get_location(pop_data$LON, pop_data$LAT))),
+             size = 10, color = "yellow", alpha = 0.5) +
+  geom_polygon(aes(x = x, y = y), 
+               data = curr_co_poly.df,
+               fill = "red", 
+               color = "red") 
+ORinset
+ggsave(filename = "inset_plot.pdf", ORinset, width = 3, height = 3)
+alldat <- ggplot(aes(x = LON, y = LAT), data = pop_data)
+brook  <- ggmap(brookings, extent = "device", maprange = TRUE, base_layer = alldat)
+
+
+
+# xmin <- curr_co_bb$limits$x[1]
+# xmax <- curr_co_bb$limits$x[2]
+# ymin <- curr_co_bb$limits$y[1]
+# scalebreaks = data.frame(x=seq(xmin - 11000, xmax - 1000, 5000), 
+#                          y=(ymin + 1000), 
+#                          label=c("0", "5", "10 km"))
+# brook <- brook + layer(geom = "point", 
+#                        mapping = aes(x = LONG, y = LAT),
+#                        geom_params = list(pch = 3, 
+#                                           color = "yellow",
+#                                           alpha = 0.25, 
+#                                           size = 5), 
+#                        data = TREES
+#                        )
+#   geom_point(aes(x = LONG, y = LAT, color = factor(YEAR)), 
+#                             pch = 3, alpha = 0.5,
+#                             size = 5, data = TREES)
+psize <- 5
+
+for (i in 1:length(years)){
+  newbrook <- brook
+  yearData  <- filter(pop_data, YEAR == years[i])
+  myTrees   <- filter(TREES, YEAR %in% years[i])
+  if (i > 1){
+    if (i > 2){
+      pasTrees <- filter(TREES, YEAR %in% years[1:(i-1)])
+      newbrook <- newbrook + add_points(pasTrees, color = "grey", psize)
+    }
+    lasTrees <- filter(TREES, YEAR == years[i-1])
+    newbrook <- newbrook + add_points(lasTrees, color = "white", psize)
+    thePast <- filter(pop_data, YEAR %in% years[1:i])
+    newbrook <- newbrook + geom_point(fill = "white", alpha = 0.125, 
+                                      size = psize, 
+                                      pch = 21, data = thePast) 
+  }
+  newbrook <- newbrook + add_points(myTrees, size = psize)
+  inZones   <- ZONE2[ZONE2$id %in% unique(yearData$ZONE2), ]
+#   baseLayer <- ggplot(aes(x = LON, y = LAT), data = yearData)
+#   newbrook <- ggmap(brookings, extent = "device", base_layer = baseLayer,
+#                   maprange = TRUE)
+  plotlist[[i]] <- newbrook + 
+    geom_polygon(aes(x = long, y = lat, group = id), data = ZONE2, alpha = 0.2,
+                 size = 1, color = "gold", fill = "black") +
+    get_coord_map(inZones$long, inZones$lat) + 
+    geom_point(aes(color = factor(MLG)), alpha = 0.75, size = psize, data = yearData) +
+    geom_text(aes(label = MLG), data = yearData) +
+    scale_color_manual(values = c(myPal)) +
+    ggtitle(years[i])
+}
+names(plotlist) <- years
+
+plotlist[["total"]] <- brook +
+  geom_polygon(aes(x = long, y = lat, group = id), data = ZONE2, alpha = 0.2,
+                 size = 1, color = "gold", fill = "black") + 
+  add_points(TREES, "yellow", psize) +
+  geom_point(aes(color = factor(MLG)), alpha = 0.75, size = psize) +
+  curr_co_bb + 
+  geom_point(pch = 1, size = psize, alpha = 0.125) + 
+  scale_color_manual(name = 'Infected tree\n\n\nMultilocus\ngenotype', 
+                     values = c(myPal)) +
+  guides(col = guide_legend(ncol = 3, keywidth = 0.5, keyheight = 0.5)) +
+  theme(#legend.key = element_rect(fill = "black"), 
+        text = element_text(family = "Helvetica")) + 
+  geom_segment(aes(x = alon, xend = blon, y = alat + 0.03, yend = blat + 0.03), 
+               data = theline, color = "black", size = 2) +
+  geom_text(aes(x = alon , y = alat + 0.03, label = "5mi"), fontface = "bold",
+            data = theline, color = "black", family = "Helvetica", vjust = -1,
+            hjust = 0)
+
+invisible(lapply(plotlist, print))
+ggsave(filename = "total_plot.pdf", plotlist[["total"]], width = 7, height = 9)
+```
+
+```{r, fig.height = 10, fig.width = 10}
+ramdat_loci <- genind2df(ramdat, sep = "|", usepop = FALSE)
+allnewdat <- ggplot(aes(x = LON, y = LAT), data = cbind(pop_data, ramdat_loci))
+brook2  <- ggmap(brookings, extent = "device", maprange = TRUE, 
+                 base_layer = allnewdat)
+for (i in names(ramdat_loci)){
+  gtPal <- char2pal(allnewdat$data[[i]], 
+                    function(x){
+                      if (x < 10) RColorBrewer::brewer.pal(x, "Set1")
+                      else funky(x)
+                      })
+  x <- brook2 + 
+    geom_polygon(aes(x = long, y = lat, group = id), data = ZONE2, alpha = 0.2,
+                   size = 1, color = "gold", fill = "black") + 
+    add_points(TREES, "yellow", psize) +
+    geom_point(aes_string(color = i), alpha = 0.75, size = psize) +
+    curr_co_bb + 
+    geom_point(pch = 1, size = psize, alpha = 0.125) + 
+    scale_color_manual(name = paste('Genotype at', i, sep = "\n"), 
+                       values = gtPal) +
+    guides(col = guide_legend(ncol = 1, keywidth = 0.5, keyheight = 0.5)) +
+    theme(#legend.key = element_rect(fill = "grey95"), 
+          text = element_text(family = "Helvetica")) + 
+    geom_segment(aes(x = alon, xend = blon, y = alat + 0.03, yend = blat + 0.03), 
+                 data = theline, color = "black", size = 2) +
+    geom_text(aes(x = alon , y = alat + 0.03, label = "5mi"), fontface = "bold",
+              data = theline, color = "black", family = "Helvetica", vjust = -1,
+              hjust = 0)
+  print(x)
+}
+```
+
+
+
+### Save all plots to files.
+
+```{r}
+invisible(lapply(plotlist, function(x){
+ ggsave(filename = paste(x$labels$title, "pdf", sep = "."), 
+   plot = x, path = "bigplots", scale = 2, 
+ 	width = 8.5, height = 11)
+}))
+```
+

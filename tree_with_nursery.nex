@@ -1,0 +1,19 @@
+#NEXUS
+[R-package APE, Fri Nov  7 13:04:00 2014]
+
+BEGIN TAXA;
+	DIMENSIONS NTAX = 9;
+	TAXLABELS
+		Nursery_CA
+		Nursery_OR
+		JHallCr_OR
+		NFChetHigh_OR
+		Coast_OR
+		HunterCr_OR
+		Winchuck_OR
+		ChetcoMain_OR
+		PistolRSF_OR
+	;
+END;
+BEGIN TREES;
+	TRANSLATE

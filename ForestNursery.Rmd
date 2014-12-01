@@ -1,0 +1,606 @@
+---
+title: "Comparing Forest and Nursery Data"
+author: "Zhian N. Kamvar"
+date: "October 9, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document compares the data from forest and nursery populations of *Phytophthora ramorum*. Forest populations are isolated from Curry County, OR between 2001 and 2014. Nursery populations were isolated between 2000 and 2012 from both California and Oregon nurseries. Both populations are combined in a data set called `for2nur`.
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(poppr)
+library(reshape2)
+library(ggplot2)
+library(ape)
+library(igraph)
+library(dplyr)
+options(stringsAsFactors = FALSE)
+data(ramdat)
+data(for2nur)
+data(pop_data)
+data(myPal)
+data(comparePal)
+sessionInfo()
+```
+
+Data summary
+--------
+
+```{r}
+for2nur
+summary(for2nur)
+```
+
+
+```{r, summary_stats, results = 'asis', cache = TRUE}
+knitr::kable(poppr(for2nur, quiet = TRUE))
+invisible(genotype_curve(for2nur, sample = 1000, quiet = TRUE))
+```
+
+DAPC
+------
+
+This analysis will attempt to explain the differentiation between all populations. Here, I am setting the hierarchy to be by Source (one of `r paste(levels(gethierarchy(for2nur, ~SOURCE)[[1]]), collapse = ", ")`) and State (Oregon or California). 
+
+### Cross validation
+
+Since we want to avoid overfitting the data, we utilize cross-validation, which 
+performs DAPC on 90% of the data and attempts to predict where the 10% that was left out came from. This is doen 1000 times per number of principal components. The number of principal components with the lowest mean squared error and highest mean successful assignment is then used for the final analysis.
+
+```{r, ORCA_xval, cache = TRUE}
+setpop(for2nur) <- ~SOURCE/STATE
+set.seed(9001)
+system.time(xval <- xvalDapc(for2nur@tab, pop(for2nur), n.pca = 5:15, 
+                             result = "overall", n.rep = 1000))
+xval[-1]
+```
+
+### DAPC
+
+```{r, analyzing_ORCA, fig.width = 14, fig.height = 7}
+for2nur.dapc <- dapc(for2nur, n.pca = 20, n.da = 8)
+# comparePal <- char2pal(c("JHallCr_OR", "NFChetHigh_OR", "Coast_OR", 
+#                          "HunterCr_OR", "Winchuck_OR", "ChetcoMain_OR", 
+#                          "PistolRSF_OR"))
+# (comparePal <- c(Nursery_CA = "#000000", Nursery_OR = "#808080", comparePal))
+par(mfrow = c(1, 2))
+scatter(for2nur.dapc, col = comparePal, cex = 2, legend = TRUE, clabel = FALSE,
+        posi.leg = "bottomleft", scree.pca = TRUE, posi.pca = "topright",
+        cleg = 0.75, xax = 1, yax = 2, inset.solid = 1)
+scatter(for2nur.dapc, col = comparePal, cex = 2, legend = TRUE, clabel = FALSE,
+        posi.leg = "bottomleft", inset.solid = 1,
+        cleg = 0.75, xax = 3, yax = 2)
+par(mfrow = c(1, 1))
+
+# pdf("fig5scatter.pdf", width = 3.5, height = 3.5, pointsize = 10)
+# scatter(for2nur.dapc, col = comparePal, cex = 2, legend = TRUE, clabel = FALSE,
+#         posi.leg = "bottomleft", scree.pca = TRUE, posi.pca = "topright",
+#         posi.da = "topleft", cleg = 0.75, xax = 1, yax = 2, inset.solid = 1, 
+#         ratio.pca = 0.2, ratio.da = 0.2)
+# dev.off()
+
+summary(for2nur.dapc)
+```
+
+The above plots show the first three DA coordinates. DA coordinate 2 is on the
+y axis. Plot 1 contains DA coordinate 1 whereas plot 2 containd DA coordinate
+3. Plot 2 can be thought of as plot 1 rotated about the x axis. 
+
+```{r, posterior_ORCA, fig.width = 10, fig.height = 15}
+setpop(for2nur) <- ~SOURCE/STATE
+plot_posterior(for2nur.dapc, for2nur, pal = comparePal) + theme(axis.text.x = element_text(size = 3))
+
+```
+
+### Allele contributions
+```{r, loadingplot}
+loadingplot(for2nur.dapc$var.contr, axis = 1)
+````
+
+```{r, allele_contrib, fig.with = 20, fig.height = 30}
+theLocus <- truenames(seploc(for2nur)[["PrMS43A1"]])$tab
+theFreqs <- apply(theLocus, 2, function(e) tapply(e, pop(for2nur), mean, 
+                                                  na.rm = TRUE))
+colnames(theFreqs) <- sub("PrMS43A1.", "", colnames(theFreqs))
+names(dimnames(theFreqs)) <- c("Region", "Allele")
+ggplot(melt(theFreqs),
+       aes(x = Allele, y = value, color = Region, group = Region)) +
+  geom_vline(aes(xintercept = Allele), alpha = 0.5, linetype = 3) + 
+  geom_point(aes(size = log(value)), show_guide = FALSE) + 
+  geom_line() + 
+  scale_color_manual(values = comparePal) + 
+  facet_wrap(~Region, ncol = 1) + 
+  geom_text(aes(label = ifelse(value >= 0.05, Allele, NA), y = value + 0.05), 
+            color = "black", position = "jitter") + 
+  scale_x_log10() + 
+  labs(list(x = "Allele Frequency")) + 
+  theme_bw()
+```
+
+### Which MLGs cross pouplations?
+```{r, nursery_crossings}
+setpop(for2nur) <- ~SOURCE/YEAR
+invisible(source_year <- mlg.crosspop(for2nur))
+source_year <- source_year[vapply(lapply(source_year, names), 
+                           function(z) any(grepl("Nursery", z)), logical(1))]
+symlg <- mlgFromString(names(source_year))
+invisible(mlg.crosspop(for2nur, mlgsub = symlg[symlg < 1000]))
+nursery_cross <- unique(sub("_.+?$", "", unlist(lapply(source_year, names))))
+pops <- levels(gethierarchy(for2nur, ~SOURCE)$SOURCE)
+pops[!pops %in% nursery_cross] # regions with no Nursery isolates.
+```
+
+### MSN
+```{r, nursery_msn, cache = TRUE, fig.width = 12, fig.height = 12}
+setpop(for2nur) <- ~SOURCE/STATE
+for2nur
+# nf.msn <- bruvo.msn(for2nur, replen = other(ramdat)$REPLEN, include.ties = TRUE,
+#                     showplot = FALSE)
+
+newReps <- other(ramdat)$REPLEN
+(newReps[3] <- 4) # Tetranucleotide repeat
+(newReps <- fix_replen(ramdat, newReps))
+nf.msn <- bruvo.msn(for2nur, replen = newReps, include.ties = TRUE,
+                    showplot = FALSE)
+
+degs <- igraph::degree(nf.msn$graph)
+names(degs) <- igraph::V(nf.msn$graph)$label
+sort(degs)
+edges_to_remove <- E(nf.msn$graph)[E(nf.msn$graph)$weight >= 0.06]
+clusts <- clusters(delete.edges(nf.msn$graph, edges_to_remove))
+names(clusts$membership) <- V(nf.msn$graph)$label
+
+# clustPal  <- clusts$csize
+# theClusts <- clustPal > 3
+# clustOrder <- order(clustPal, decreasing = TRUE)
+# clustPal[clustOrder][theClusts[clustOrder]]   <- RColorBrewer::brewer.pal(sum(theClusts), "Set1")
+# clustPal[clustOrder][!theClusts[clustOrder]]  <- gray.colors(sum(!theClusts))
+# nodeList <- lapply(1:length(clustPal), function(x) which(clusts$membership == x))
+
+make_node_list <- function(clusts, pal, cutoff = 3){
+  PAL <- match.fun(pal)
+  clustPal  <- table(clusts$membership)
+  theClusts <- clustPal > 3
+  clustOrder <- order(clustPal, decreasing = TRUE)
+  clustPal[clustOrder][theClusts[clustOrder]]   <- PAL(sum(theClusts))
+  clustPal[clustOrder][!theClusts[clustOrder]]  <- gray.colors(sum(!theClusts))
+  nodeList <- lapply(1:length(clustPal), function(x) which(clusts$membership == x))
+  names(nodeList) <- clustPal
+  return(nodeList)
+}
+
+clust_cutoff <- function(clusts, cutoff = 3){
+  table(clusts$membership) > 3
+}
+
+nodeList <- make_node_list(clusts, 
+                           function(x) RColorBrewer::brewer.pal(x, "Set1"),
+                           cutoff = 3)
+theClusts <- clust_cutoff(clusts, 3)
+
+goodSeed <- 6
+# goodSeed <- 17
+# goodSeed <- 24
+thisPal <- function(x) comparePal[nf.msn$populations]
+# for (i in goodSeed:100){
+#   set.seed(i)
+  set.seed(goodSeed)
+  MASTER <- get_layout(nf.msn$graph, LAYOUT = layout.fruchterman.reingold)
+  plot_poppr_msn(for2nur, nf.msn, gad = 10, palette = thisPal, mlg = TRUE, 
+                 layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+                 quantiles = FALSE, #inds = unique(ramdat@mlg),
+                 vertex.label.color = "firebrick",
+                 mark.groups = nodeList[theClusts], 
+                 mark.border = names(nodeList)[theClusts],
+                 mark.col = transp(names(nodeList)[theClusts], 0.05),
+                 mark.expand = 2,
+                 mark.shape = 0)
+#   prompt <- paste("save", i, "as seed?")
+#   accept <- readline(prompt)
+#   if (substr(accept, 1, 1) == "y"){
+#     theSeed <- i
+#     break
+#   }
+# }
+
+# mainMLGs <- order(table(ramdat@mlg), decreasing = TRUE)[1:10]
+# pdf("msn_nursery.pdf", width = 352/2.54/10, height = 352/2.54/10, pointsize = 40)
+#   plot_poppr_msn(for2nur, nf.msn, gad = 10, palette = thisPal, mlg = TRUE, 
+#                  layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+#                  quantiles = FALSE, inds = mainMLGs, nodelab = 1000,
+#                  vertex.label.color = "firebrick",
+#                  mark.groups = nodeList[theClusts], 
+#                  mark.border = names(nodeList)[theClusts],
+#                  mark.col = transp(names(nodeList)[theClusts], 0.05),
+#                  mark.expand = 2,
+#                  mark.shape = 0)
+# dev.off()
+```
+
+
+### Nursery Predictions
+
+```{r, predicting_Nursery, fig.width = 10, fig.height = 10}
+
+assignTheme <- theme(
+  panel.grid.major.y = element_line(color = "gray75", linetype = 3), 
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray75"),
+  panel.grid.minor.x = element_blank(),#element_line(color = "gray75"),
+  panel.background = element_blank(),
+  panel.border = element_blank(),
+  legend.key = element_blank(),
+  axis.line = element_line(color = "black"),
+  axis.text = element_text(color = "black"),
+  axis.ticks = element_line(color = "black")
+  )
+
+nurlist <- c("Nursery_CA", "Nursery_OR")
+z2.dapc <- dapc(popsub(for2nur, blacklist = nurlist, drop = FALSE), 
+                n.pca = 12, n.da = 6)
+nur <- popsub(for2nur, nurlist, drop = FALSE)
+nurpred <- predict.dapc(z2.dapc, newdata = nur)
+plot_posterior(nurpred, nur, pal = comparePal)
+ggsave("nursery_predictions_structure.png", width = 183, height = 183, 
+       units = "mm", dpi = 300)
+colMeans(nurpred$posterior)
+nurpredmat <- matrix(c( 
+  rowMeans(apply(nurpred$posterior, 1, function(x) x >= 0.95)),
+  rowMeans(apply(nurpred$posterior, 1, function(x) x >= 0.99)),
+  rowMeans(apply(nurpred$posterior, 1, function(x) x >= 0.999))),
+  ncol = 3)
+dimnames(nurpredmat) <- list(Population = colnames(nurpred$posterior),
+                             `membership probability` = c("95%", "99%", "99.9%"))
+signif(nurpredmat, 3)*100
+mean(apply(nurpred$posterior, 1, function(x) all(x <= 0.6)))
+assignmat <- matrix(c(summary(z2.dapc)$assign.per.pop, 
+                      summary(for2nur.dapc)$assign.per.pop[-c(1:2)]), 
+                    ncol = 2
+                    )
+dimnames(assignmat) <- list(Population = colnames(nurpred$posterior), 
+                            c("Without Nursery", "With Nursery"))
+assignmat
+```
+
+```{r, nosebpistolXval, cache = TRUE}
+noseb.gt.10 <- popsub(for2nur, blacklist = c("HunterCr_OR", "PistolRSF_OR"),
+                drop = FALSE)
+set.seed(9001)
+system.time(noseb.dapcxval <- xvalDapc(noseb.gt.10@tab, pop(noseb.gt.10), 
+                                       n.pca = 5:20, result = "overall", 
+                                       n.rep = 1000))
+noseb.dapcxval[-1]
+```
+
+```{r, fig.width = 10, fig.height = 10}
+noseb.dapc <- dapc(noseb.gt.10, n.pca = 16, n.da = 6)
+scatter(noseb.dapc, col = comparePal[noseb.gt.10@pop.names], cex = 2, 
+        legend = TRUE, clabel = FALSE,
+        posi.leg = "bottomleft", scree.pca = TRUE, posi.pca = "topright",
+        cleg = 0.75, xax = 1, yax = 2, inset.solid = 1)
+```
+
+Inertia ellipses represent 95% data.
+```{r, sebpredscatter, fig.width = 10, fig.height = 10}
+sebdat <- popsub(for2nur, c("HunterCr_OR", "PistolRSF_OR"), drop = FALSE)
+sebpred <- predict.dapc(noseb.dapc, sebdat)
+plot_posterior(sebpred, sebdat, pal = comparePal)
+scatter(noseb.dapc, col = comparePal[noseb.gt.10@pop.names], 
+        cex = 2, scree.da = FALSE, cellipse = 2.5,
+        legend = TRUE, clabel = FALSE,
+        posi.leg = "bottomright", posi.pca = "topright",
+        cleg = 0.75, xax = 1, yax = 2, inset.solid = 1)
+par(xpd = TRUE)
+sebpch <- c(HunterCr_OR = 15, PistolRSF_OR = 17)
+points(sebpred$ind.scores[, 1], sebpred$ind.scores[, 2], 
+       pch = sebpch[as.character(pop(sebdat))], 
+       col = transp(comparePal[sebdat@pop.names], 0.2), 
+       cex = 3)
+legend("topright", legend = c("HunterCr", "PistolRSF"), pch = sebpch, 
+       col = comparePal[sebdat@pop.names], cex = 0.75)
+add.scatter.eig(noseb.dapc$eig, 15, 1, 2, posi="bottomleft", inset=.02)
+
+sebpredmat <- matrix(c(
+  rowMeans(apply(sebpred$posterior[1:66, ], 1, function(x) x >= 0.5)),
+  rowMeans(apply(sebpred$posterior[1:66, ], 1, function(x) x >= 0.95)),
+  rowMeans(apply(sebpred$posterior[1:66, ], 1, function(x) x >= 0.99)),
+  rowMeans(apply(sebpred$posterior[1:66, ], 1, function(x) x >= 0.999))),
+  ncol = 4)
+dimnames(sebpredmat) <- list(Population = colnames(sebpred$posterior),
+                             `membership probability` = c("50%", "95%", "99%", 
+                                                          "99.9%"))
+signif(sebpredmat, 3)
+```
+
+
+
+```{r, nurpredscatter, fig.width = 10, fig.height = 10}
+scatter(z2.dapc, cex = 2, legend = TRUE, clabel = FALSE, 
+        col = comparePal[names(z2.dapc$prior)], scree.pca = FALSE,
+        posi.leg = "bottomleft", posi.pca = "topleft",
+        cleg = 0.75, bg="white", scree.da=0, pch=20, 
+        xlim = c(-4, 15), ylim = range(z2.dapc$ind.coord[, 2]) + c(-0.01, 0.01), 
+        solid = 0.5)
+par(xpd=TRUE)
+nurpch <- c(Nursery_CA = 15, Nursery_OR = 17)
+points(nurpred$ind.scores[, 1], nurpred$ind.scores[, 2], 
+       pch = nurpch[as.character(pop(nur))], col = transp("black", 0.2), cex = 2)
+legend("topright", legend = c("Nursery (CA)", "Nursery (OR)"), pch = nurpch,
+       cex = 0.75)
+add.scatter.eig(z2.dapc$eig, 15, 1, 2, posi="bottomright", inset=.02)
+```
+
+
+```{r, fig.width = 10, fig.height = 3}
+ggplot(melt(assignmat), aes(y = Population, x = value, shape = Var2)) + 
+  geom_point(size = 4, alpha = 0.75) +
+  labs(list(y = "Population", x = "rate of successful reassignment", 
+           shape = "", 
+           title = "Posterior values from DAPC with and without Nursery data")
+       ) + assignTheme
+ggsave("reassignment_plot.png", width = 183, height = 61, units = "mm", 
+       dpi = 300)
+ggplot(melt(nurpredmat), 
+       aes(y = Population, x = value, size = `membership probability`)) + 
+  geom_point(alpha = 0.75) + 
+  assignTheme + 
+  scale_size_discrete(range = c(6, 3)) + 
+  labs(list(x = "Percent successful assignment", 
+            size = "membership\nprobability",
+            title = "Posterior values for predictions of nursery genotypes"))
+ggsave("nursery_predictions.png", width = 183, height = 61, units = "mm",
+       dpi = 300)
+
+```
+
+Trees
+-----
+
+```{r, tree, cache=TRUE}
+myMLG <- myPal
+nurMLG <- char2pal(sort(unique(for2nur@mlg[for2nur@mlg > 70])), grey.colors)
+names(nurMLG) <- paste("MLG", names(nurMLG), sep = ".")
+myMLG <- c(myMLG, nurMLG)
+
+date()
+set.seed(5555)
+system.time(try(for2nur.tree <- bruvo.boot(for2nur, 
+                                           replen = newReps,#other(for2nur)$REPLEN,
+                                           tree = "nj", showtree = FALSE,
+                                           quiet = TRUE, sample = 100)))
+date()
+```
+
+```{r, treemod, fig.width = 12, fig.height = 30}
+for2nur.tree$tip.label <- paste("MLG", for2nur@mlg, sep = ".")
+for2nur.tree <- ladderize(for2nur.tree)
+
+# pdf("~/Downloads/testree.pdf", width = 12, height = 80)
+par(mfrow = c(1, 2))
+
+plot.phylo(for2nur.tree, cex = 0.8, font = 2, adj = 0, 
+           label.offset = 1/800, main = "color by MLG",
+           tip.col = myMLG[for2nur.tree$tip.label])
+nodelabels(ifelse(for2nur.tree$node.label > 50, for2nur.tree$node.label, NA), 
+           adj = c(1.3, -0.5), frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+
+plot.phylo(for2nur.tree, cex = 0.8, font = 2, adj = 0, 
+           label.offset = 1/800, main = "color by Population",
+           tip.col = comparePal[pop(for2nur)])
+nodelabels(ifelse(for2nur.tree$node.label > 50, for2nur.tree$node.label, NA), 
+           adj = c(1.3, -0.5), frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+legend("topright", legend = names(comparePal), fill = comparePal, bty = "n",
+       border = NULL)
+
+par(mfrow = c(1, 1))
+# dev.off()
+```
+
+
+```{r, tree2, cache=TRUE}
+set.seed(5001)
+system.time(mlg.tree <- bruvo.boot(clonecorrect(for2nur, hier = NA), 
+                                   replen = newReps,#other(for2nur)$REPLEN, 
+                                   tree = "nj", 
+                                   sample = 1000, 
+                                   quiet = TRUE, 
+                                   showtree = FALSE))
+```
+
+### Unique MLG tree
+
+When Everett asked about the Joe Hall outbreak, he asked if the genotypes that
+had jumped accross the drainage appeared to be different than the ones on the 
+West side. Looking at this, I saw that genotype 51 had appeared in 2003. This
+was a genotype from the second largest group in the MSN that has been expanding
+in current years. 
+
+Looking at the genotypes, I noticed that the genotypes from that group had a 
+different set of alleles at PrMS39. Plotting these, we can see that they
+segregate quite well on the tree (which makes sense as it partially contributes 
+to the structure).
+
+```{r, tree2plot, fig.width = 10, fig.height = 15}
+
+mlg.tree$tip.label <- paste("MLG", clonecorrect(for2nur, hier = NA)@mlg, sep = ".")
+mlg.tree <- ladderize(mlg.tree)
+gts <- genind2df(clonecorrect(for2nur, hier = NA), sep = "|", usepop = FALSE)[[3]]
+gtPal <- char2pal(gts, function(x) RColorBrewer::brewer.pal(x, "Dark2"))
+oldTips <- mlg.tree$tip.label
+mlg.tree$tip.label <- paste(oldTips, gts)
+# png("~/Downloads/newtree.png", width = 10, height = 15, units = "in", res = 300)
+par(mfrow = c(1, 2))
+plot.phylo(mlg.tree, cex = 0.55, font = 2,  adj = 0,
+           label.offset = 1/800, 
+           tip.col = gtPal[gts], main = "color by locus PrMS39")
+nodelabels(ifelse(mlg.tree$node.label > 50, mlg.tree$node.label, NA), 
+           adj = c(1.3, -0.5), frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+
+
+mlg.tree$tip.label <- oldTips
+plot.phylo(mlg.tree, cex = 0.8, font = 2, adj = 0, 
+           label.offset = 1/800,
+           tip.col = names(nodeList)[clusts$membership], 
+           main = "color by MSN cluster\nwith one mutational step")
+nodelabels(ifelse(mlg.tree$node.label > 50, mlg.tree$node.label, NA), 
+           adj = c(1.3, -0.5), frame = "n", 
+           cex = 0.8, font = 3, xpd = TRUE)
+add.scale.bar(lwd = 5)
+
+par(mfrow = c(1, 1))
+# dev.off()
+```
+```{r, fig.width = 10, fig.height = 10}
+setpop(ramdat) <- ~Pop
+# setpop(ramdat) <- ~ZONE2
+lociAlleleFreqs <- lapply(seploc(ramdat), function(z){
+  x <- apply(truenames(z)$tab, 2, 
+             function(e) tapply(e, pop(ramdat), mean, na.rm = TRUE))
+  names(dimnames(x)) <- c("Year", "Allele")
+#   names(dimnames(x)) <- c("Region", "Allele")
+  dimnames(x)[[2]] <- sub("Pr.+?A1.", "", dimnames(x)[[2]]) 
+  return(x)
+})
+
+ramdatcc <- clonecorrect(ramdat, ~Pop)
+lociAlleleFreqscc <- lapply(seploc(ramdatcc), function(z){
+  x <- apply(truenames(z)$tab, 2, 
+             function(e) tapply(e, pop(ramdatcc), mean, na.rm = TRUE))
+  names(dimnames(x)) <- c("Year", "Allele")
+  dimnames(x)[[2]] <- sub("Pr.+?A1.", "", dimnames(x)[[2]]) 
+  return(x)
+})
+
+bad_years <- as.character(2005:2011)
+lociAlleleFreqs <- melt(lociAlleleFreqs) %>% filter(!Year %in% bad_years)
+lociAlleleFreqscc <- melt(lociAlleleFreqscc) %>% filter(!Year %in% bad_years)
+
+ggplot(lociAlleleFreqs, aes(x = Year, y = value, color = value,
+# lociAlleleFreqs <- melt(lociAlleleFreqs)
+# ggplot(lociAlleleFreqs, aes(x = Year, y = value, color = value, 
+                                    group = Allele)) + 
+  geom_line() + 
+  geom_text(aes(label = Allele), fontface = "bold") + 
+  scale_x_continuous(breaks = as.numeric(ramdat@pop.names[c(1:4, 9:11)])) +
+  facet_wrap(~L1) + 
+  assignTheme +
+  labs(list(title = "Allele frequencies in forest data",
+            y = "allele frequency",
+            color = "frequency"))
+```
+```{r}
+ggplot(filter(lociAlleleFreqs, L1 == "PrMS39A1"), 
+#        aes(x = Region, y = value, color = factor(Allele), group = Allele)) +       
+       aes(x = Year, y = value, color = factor(Allele), group = Allele)) +
+#   geom_area(aes(fill = factor(Allele)), stat = "identity", alpha = 0.75) +
+  geom_line(aes(linetype = "one")) + 
+  geom_line(data = filter(lociAlleleFreqscc, L1 == "PrMS39A1"), 
+            aes(linetype = "two")) +
+  geom_point(size = 2) + 
+  geom_point(size = 2, data = filter(lociAlleleFreqscc, L1 == "PrMS39A1"), 
+             pch = 1) + 
+#   geom_bar(aes(fill = factor(Allele)), position = "fill", stat = "identity") + 
+  scale_x_continuous(breaks = as.numeric(ramdat@pop.names[c(1:4, 9:11)])) +
+  scale_linetype_manual(breaks = c("one", "two"), values = 1:2, 
+                        name = "data",
+                        guide = "legend",
+                        labels = c("Full", "Clone\nCorrected")) + 
+  assignTheme +
+  labs(list(title = "Allele frequencies in PrMS39",
+            y = "allele frequency",
+            color = "allele")) +
+  scale_color_brewer(type = "div", palette = "Set1")
+ggsave(filename = "PrMS39_alleles.png", width = 183, height = 88, units = "mm")
+```
+
+
+```{r, cophylo, fig.width = 10, fig.height = 30}
+assoc <- matrix(c(for2nur.tree$tip.label, for2nur.tree$tip.label), ncol = 2)
+cophyloplot(for2nur.tree, mlg.tree, assoc, use.edge.length = FALSE, space = 1000,
+            show.tip.label = FALSE, 
+            col = myMLG[assoc[, 1]], lwd = 3, gap = 1)
+```
+
+### Population Tree
+
+Since DAPC showed Cape Sebastian isolates clustring together and we see that
+nursery isolates are clustering around the cape sebastian isolates in the MSN,
+it would be a good idea to include the Nursery data within the population
+tree from Nei's distance.
+
+```{r}
+neiboot <- function(x, sample = 1000, color_by = "black"){
+  x <- genind2genpop(x, quiet = TRUE)
+  outTree <- aboot(x, sample = sample, cutoff = 50, quiet = TRUE, tree = "nj",
+                   showtree = FALSE)
+  plot.phylo(outTree, xpd = TRUE, font = 2, cex = 0.8, type = "u",
+             label.offset = 0.005, adj = 0, tip.col = color_by)
+  nodelabels(outTree$node.label, xpd = TRUE, frame = "n", cex = 0.8, font = 3)#,
+#              adj = c(1.3, -0.5))
+#   axisPhylo(3)
+  add.scale.bar(lwd = 5)
+  return(outTree)
+}
+```
+```{r, tree_state_pop, cache = TRUE, fig.width = 10, fig.height = 10}
+set.seed(5555)
+source_state <- neiboot(for2nur, sample = 10000, 
+        color_by = comparePal[for2nur@pop.names])
+set.seed(5555)
+source_statecc <- neiboot(clonecorrect(for2nur, ~SOURCE/STATE, combine = TRUE),
+                          sample = 10000, 
+                          color_by = comparePal[for2nur@pop.names])
+```
+
+```{r, tree_base_pop, cache = TRUE, fig.width = 10, fig.height = 10}
+set.seed(5555)
+source_ <- neiboot(setpop(for2nur, ~SOURCE), sample = 10000, 
+        color_by = comparePal[for2nur@pop.names[-2]])
+set.seed(5555)
+source_cc <- neiboot(clonecorrect(for2nur, ~SOURCE), sample = 10000,
+        color_by = comparePal[for2nur@pop.names[-2]])
+```
+
+
+```{r, eval = FALSE}
+add.tip.color <- function(x, tip_colors){
+  tips <- x$tip.label
+  colors <- paste0("[&!color=", tip_colors, "]")
+  x$tip.label <- paste0(tips, colors)
+  return(x)
+}
+
+round.nodes <- function(x){
+  x$node.label <- round(x$node.label)
+  return(x)
+}
+
+mywrite.nexus <- function(x, tip_colors){
+  theFile <- paste(substitute(x), "nursery.nex", sep = "_")
+  x <- round.nodes(add.tip.color(x, tip_colors))
+  write.nexus(x, file = theFile)
+} 
+mywrite.nexus(source_state, comparePal[for2nur@pop.names])
+mywrite.nexus(source_statecc, comparePal[for2nur@pop.names])
+mywrite.nexus(source_, comparePal[for2nur@pop.names[-2]])
+mywrite.nexus(source_cc, comparePal[for2nur@pop.names[-2]])
+```
+

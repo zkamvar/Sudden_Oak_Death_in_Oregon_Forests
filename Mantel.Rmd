@@ -1,0 +1,187 @@
+---
+title: "Mantel Tests"
+author: "Zhian N. Kamvar"
+date: "October 13, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document will explore the spatial analyses of the data
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(poppr)
+library(reshape2)
+library(ggplot2)
+data(ramdat)
+data(pop_data)
+options(stringsAsFactors = FALSE)
+sessionInfo()
+```
+
+
+Mantel Tests
+-------
+
+The purpose of a mantel test is to test the hypothesis that genetic distance is
+correlated with geographic distance. As we have defined this data by year and
+by watershed, we will perform the mantel test on 4 scales:
+
+1. Overall
+2. By Year
+3. By Watershed
+4. By Year with respect to Watershed
+
+```{r, setup, cache = FALSE}
+options(digits = 10)
+newReps <- other(ramdat)$REPLEN
+(newReps[3] <- 4) # Tetranucleotide repeat
+(newReps <- fix_replen(ramdat, newReps))
+bdist  <- bruvo.dist(ramdat, replen = newReps)#other(ramdat)$REPLEN)
+gdist  <- dist(pop_data[, c("LAT", "LON")])
+```
+
+
+
+### 1. Overall
+
+```{r, overall, cache = FALSE}
+system.time(overall_mantel <- spatial_stats(ramdat, 
+                                xy = gdist, 
+                                hierarchy = NULL, 
+                                distance = bdist,
+                                sample = 99999,
+                                seed = 9001))
+overall_mantel
+overall_lm <- spatial_stats(ramdat, 
+                            xy = gdist, 
+                            hierarchy = NULL, 
+                            distance = bdist, 
+                            stat = "lm")
+summary(overall_lm)
+```
+
+#### Without Cape Sebastian
+```{r, overall_noseb, cache = FALSE}
+noseb <- popsub(setpop(ramdat, ~ZONE2), blacklist = "HunterCr")
+bdist.noseb <- bruvo.dist(noseb, replen = newReps)
+gdist.noseb <- dist(other(noseb)$xy)
+system.time(overall_mantel_noseb <- spatial_stats(noseb, 
+                                                  xy = gdist.noseb, 
+                                                  hierarchy = NULL, 
+                                                  distance = bdist.noseb,
+                                                  sample = 99999,
+                                                  seed = 9001))
+overall_mantel_noseb
+overall_lm_noseb <- spatial_stats(noseb, 
+                                  xy = gdist.noseb, 
+                                  hierarchy = NULL, 
+                                  distance = bdist.noseb, 
+                                  stat = "lm")
+summary(overall_lm_noseb)
+```
+
+### 2. By Year
+
+```{r, by_year, fig.height = 10, fig.width = 10, cache = FALSE}
+
+system.time(by_year <- spatial_stats(ramdat, 
+                                     xy = gdist,
+                                     hierarchy = ~Pop, 
+                                     distance = bdist, 
+                                     sample = 99999,
+                                     seed = 9001))
+by_year_lm <- spatial_stats(ramdat, xy = gdist, hierarchy = ~Pop, distance = bdist, 
+                         stat = "lm")
+```
+
+### 3. By Watershed
+
+```{r, by_watershed, fig.height = 10, fig.width = 10, cache = FALSE}
+
+system.time(by_zone <- spatial_stats(ramdat, 
+                                     xy = gdist, 
+                                     hierarchy = ~ZONE2, 
+                                     distance = bdist, 
+                                     sample = 99999,
+                                     seed = 9001))
+by_zone_lm <- spatial_stats(ramdat, xy = gdist, hierarchy = ~ZONE2, 
+                         distance = bdist, stat = "lm")
+```
+
+### 4. By Year with respect to Watershed
+
+```{r, by_yearwatershed, fig.height = 15, fig.width = 15, cache = FALSE}
+system.time(by_yearzone <- spatial_stats(ramdat, 
+                                         xy = gdist, 
+                                         hierarchy = ~ZONE2/Pop,
+                                         distance = bdist, 
+                                         sample = 99999,
+                                         seed = 9001,
+                                         ncol = 5))
+by_yearzone_lm <- spatial_stats(ramdat, xy = gdist, hierarchy = ~ZONE2/Pop, 
+                         distance = bdist, stat = "lm", ncol = 5)
+
+```
+
+Summary Table
+------
+
+```{r, summary}
+get_summary <- function(x, value){
+  vapply(x, "[[", numeric(1), value)
+}
+
+split_name <- function(x){
+  strsplit(x, "_")[[1]]
+}
+
+resmat <- matrix(nrow = length(by_zone) + 1, ncol = length(by_year) + 1,
+                 dimnames = list(Region = c(names(by_zone), "Pooled"),
+                                 Year   = c(names(by_year), "Pooled"))
+                 )
+resmat.p <- resmat
+resmat["Pooled", ]   <- c(get_summary(by_year, "obs"), overall_mantel$obs)
+resmat.p["Pooled", ] <- c(get_summary(by_year, "pvalue"), overall_mantel$pvalue)
+
+resmat[, "Pooled"]   <- c(get_summary(by_zone, "obs"), overall_mantel$obs)
+resmat.p[, "Pooled"] <- c(get_summary(by_zone, "pvalue"), overall_mantel$pvalue)
+
+yz.obs <- get_summary(by_yearzone, "obs")
+yz.p   <- get_summary(by_yearzone, "pvalue")
+for (i in names(yz.obs)){
+  ndex <- split_name(i)
+  resmat[ndex[1], ndex[2]]   <- yz.obs[i]
+  resmat.p[ndex[1], ndex[2]] <- yz.p[i]
+}
+
+charmat <- apply(resmat, 2, function(x) as.character(round(x, 2)))
+charmat.p <- ifelse(resmat.p > 0.1, "", 
+                    ifelse(resmat.p > 0.05, ".", 
+                           ifelse(resmat.p > 0.01, "*", 
+                                  ifelse(resmat.p > 0.001, "**", "***"))))
+
+charmatnew <- charmat
+charmatnew[] <- paste0(charmat, charmat.p)
+charmatnew[] <- paste0(charmat, charmat.p)
+charmatnew[grep("NANA", charmatnew)] <- NA
+charmatnew[grep("NaN", charmatnew)] <- NaN
+dimnames(charmatnew) <- dimnames(resmat)
+charmatnew
+write.table(charmatnew, file = "mantel_table.csv", sep = ",", row.names = TRUE,
+            col.names = NA, na = "-")
+```
+
+
+
+

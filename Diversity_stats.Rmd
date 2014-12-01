@@ -1,0 +1,814 @@
+---
+title: "Diversity_statistics"
+author: "Zhian N. Kamvar"
+date: "October 15, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document will analyze and display the stastistics of diversity at the locus
+and genotype level. 
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(reshape2)
+library(ggplot2)
+library(poppr)
+library(adegenet)
+library(mmod)
+library(dplyr)
+library(tidyr)
+options(stringsAsFactors = FALSE)
+data(ramdat)
+data(pop_data)
+data(myPal)
+sessionInfo()
+myTheme <- theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+Functions
+------
+```{r}
+get_stats <- function(z){
+  mat <- matrix(nrow = nrow(z), ncol = 4, 
+                dimnames = list(Pop = rownames(z), 
+                                Index = c("H", "G", "Hexp", "E.5")
+                                )
+                )
+  N     <- rowSums(z)
+  H     <- vegan::diversity(z)
+  G     <- vegan::diversity(z, "inv")
+  Simp  <- vegan::diversity(z, "simp")
+  nei   <- (N/(N-1)) * Simp
+  E.5   <- (G - 1)/(exp(H) -1)
+  mat[] <- c(H, G, nei, E.5)
+  return(mat)
+}
+
+boot_stats <- function(x, i){
+  res        <- numeric(4)
+  names(res) <- c("H", "G", "Hexp", "E.5")
+  z     <- table(x[i])
+  N     <- sum(z)
+  H     <- vegan::diversity(z)
+  G     <- vegan::diversity(z, "inv")
+  Simp  <- vegan::diversity(z, "simp")
+  nei   <- (N/(N-1)) * Simp
+  E.5   <- (G - 1)/(exp(H) -1)
+  res[] <- c(H, G, nei, E.5)
+  return(res)
+}
+
+extract_samples <- function(x) rep(1:length(x), x)
+
+do_boot <- function(tab, n, ...){
+  res <- apply(tab, 1, function(x) boot::boot(extract_samples(x), boot_stats, n, ...))
+  return(res)
+}
+
+get_ci <- function(x, lb, ub){
+  res <- apply(x$t, 2, quantile, c(lb, ub), na.rm = TRUE)
+  return(res)
+}
+
+get_all_ci <- function(res, ci = 95){
+  lower_bound  <- (100 - ci)/200
+  upper_bound  <- 1 - lower_bound
+  funval       <- matrix(numeric(8), nrow = 2)
+  CI           <- vapply(res, FUN = get_ci, FUN.VALUE = funval, 
+                         lower_bound, upper_bound)
+  dCI          <- dimnames(CI)
+  dimnames(CI) <- list(CI    = dCI[[1]], 
+                       Index = c("H", "G", "Hexp", "E.5"),
+                       Pop   = dCI[[3]])
+  
+  return(CI)
+}
+
+
+boot_ci <- function(tab, n = 1000, ci = 95, total = TRUE, ...){
+  if (!is.matrix(tab) & is.genind(tab)){
+    tab <- mlg.table(tab, total = total, bar = FALSE)
+  }
+  res  <- do_boot(tab, n, ...)
+  orig <- get_stats(tab)
+  orig <- melt(orig)
+  CI   <- get_all_ci(res, ci = ci)
+  samp <- vapply(res, "[[", FUN.VALUE = res[[1]]$t, "t")
+  dimnames(samp) <- list(NULL, 
+                         Index = c("H", "G", "Hexp", "E.5"),
+                         Pop = rownames(tab))
+  pl <- ggplot(melt(samp), aes(x = factor(Pop), y = value, group = Pop)) + 
+    geom_boxplot() + 
+    geom_point(aes(color = factor(Pop), x = factor(Pop), y = value), 
+               size = 5, pch = 16, data = orig) +
+    xlab("Population") + labs(color = "Observed") +
+    facet_wrap(~Index, scales = "free_y") + myTheme
+  print(pl)
+  return(CI)
+}
+
+calc_loc_table <- function(dat, hier, combine = FALSE, lev = "allele", cc = TRUE){
+  if (cc){
+    dat <- clonecorrect(dat, hier = hier, combine = combine)
+  }
+  theTable <- locus_table(dat, information = FALSE, lev = lev)
+  theHier <- gethierarchy(dat, hier, combine = combine)
+  if (combine){
+    setpop(dat) <- hier
+    theHier <- levels(theHier[[length(theHier)]])
+  } else {
+    setpop(dat) <- as.formula(paste0("~", names(theHier)[1]))
+    theHier <- levels(theHier[[1]])
+  }
+  loc_tab <- lapply(theHier, 
+                   function(x){
+                     locus_table(dat, 
+                                 population = x, 
+                                 information = FALSE,
+                                 lev = lev)
+                   })
+  names(loc_tab) <- theHier
+  return(list(pops = loc_tab, total = theTable))
+}
+
+
+plot_loc_table <- function(tab){
+#   tab <- theList[["pops"]]
+#   tot <- melt(theList["total"])
+  tab <- melt(tab)
+  ggplot(tab, aes(y = value, x = L2, fill = L2, linetype = NA)) +
+    geom_bar(stat = "identity") +
+    geom_hline(aes(yintercept = value, linetype = L1), 
+               data = tab[tab$L1 == "total", ]) + 
+    facet_grid(summary ~ locus, scales = "free_y") +
+    scale_linetype_discrete(labels = "", name = "Pooled") +
+    myTheme
+}
+
+
+
+amova_pair <- function(pops, dat, hier, ...){
+  dat <- popsub(dat, pops)
+  if (any(table(pop(dat)) < 3)){
+    return(NULL)
+  }
+  poppr.amova(dat, hier, ...)
+}
+
+pairwise_amova <- function(x, hier, ...){
+  pops         <- x@pop.names
+  pop_combs    <- combn(pops, 2)
+  xlist        <- apply(pop_combs, 2, amova_pair, x, hier, ...)
+  names(xlist) <- apply(pop_combs, 2, paste, collapse = " : ")
+  return(xlist)
+}
+
+pairwise_amova_test <- function(pairlist, nrepet = 99){
+  res <- lapply(names(pairlist), print_amova_pairs, pairlist, nrepet)
+  names(res) <- names(pairlist)
+  return(res)
+}
+
+print_amova_pairs <- function(pairname, pairlist, nrepet){
+  thePair <- pairlist[[pairname]]
+  if (!is.null(thePair)){
+    cat(pairname, "\n")
+    theTest <- randtest(thePair, nrepet = nrepet)
+    try(plot(theTest))
+    return(theTest)
+  } else {
+    return(NULL)
+  }
+}
+
+
+getpval <- function(x){
+  if (is.null(x$pvalue)){
+    return(as.numeric(rep(NA, 4)))
+  } else {
+    pvals <- x$pvalue
+  }
+  pvals[x$rep == 0] <- NA
+  return(pvals)
+}
+
+getphi <- function(x){
+  if (is.null(x)) return(numeric(4))
+  return(x$statphi$Phi)
+}
+
+refactor <- function(strings, factors){
+  u_factors <- unique(factors)
+  u_factors[match(strings, u_factors)]
+}
+
+make_amova_table <- function(am, amt){
+  tot <- nrow(am$results)
+  res <- data.frame(list(am$results[-tot, c("Df", "Sum Sq")], 
+                         Percent = am$componentsofcovariance[-tot, 2],
+                         Pval    = rev(amt$pvalue), 
+                         Phi     = am$statphi$Phi[-tot]))
+  res <- as.matrix(res)
+  colnames(res) <- c("d.f.", "Sum of Squares", "Percent variation", "P", 
+                     "Phi statistic")
+  names(dimnames(res)) <- c("levels", "statistic")
+  return(res)
+}
+
+make_amova_printable <- function(amtab, amtabcc){
+  am_array <- array(dim      = c(dim(amtab), 2),
+                    dimnames = c(dimnames(amtab), 
+                                 list(c("full", "clone-corrected"))))
+  am_array[, , 1] <- amtab
+  am_array[, , 2] <- amtabcc
+  tabfun <- function(x){
+    x <- paste0(paste0(signif(x, 3), collapse = " ("), ")")
+    return(x)
+  }
+  res <- apply(am_array, c(1, 2), tabfun)
+  return(res)
+}
+
+ci2string <- function(x, sig = 3, colString = "-"){
+  if (all(is.na(x))) return("(-)")
+  paste0("(", paste(signif(x, sig), collapse = colString),")")
+}
+
+add_ci <- function(dtable, ciarray, sig = 3, colString = "-"){
+  
+  dtable <- data.frame(lapply(dtable, function(x, sig){
+    if (is.numeric(x)) x <- signif(x, sig)
+    return(x)
+  }, sig))
+  for (i in colnames(ciarray)){
+    to_add <- apply(ciarray[, i, ], 2, ci2string, sig, colString)
+    dtable[[i]] <- paste(signif(dtable[[i]], sig), to_add)
+  }
+  return(dtable)
+}
+
+```
+Genotypic Diversity
+---------
+
+```{r, GD, cache=TRUE}
+(GDxYear      <- poppr(ramdat, 
+                      sample = 999, 
+                      quiet = TRUE, 
+                      hist = FALSE))
+(GDxRegion    <- poppr(setpop(ramdat, ~ZONE2), 
+                      sample = 999, 
+                      quiet = TRUE, 
+                      hist = FALSE))
+(GDxYearccYR  <- poppr(ramdat, 
+                      clonecorrect = TRUE, 
+                      hier = ~Pop/ZONE2, 
+                      sample = 999, 
+                      quiet = TRUE, 
+                      hist = FALSE))
+(GDxRegionccR <- poppr(ramdat, 
+                      clonecorrect = TRUE, 
+                      hier = ~ZONE2, 
+                      sample = 999, 
+                      quiet = TRUE, 
+                      hist = FALSE))
+(Totcc        <- poppr(ramdat, 
+                      clonecorrect = TRUE, 
+                      hier = NA, 
+                      sublist = "Total",
+                      sample = 999, 
+                      quiet = TRUE, 
+                      hist = FALSE))
+```
+
+
+### Confidence intervals for genotypic diversity
+
+
+```{r, CI, fig.width = 10, fig.height = 10, cache=TRUE}
+# By Year:
+set.seed(9001)
+system.time(year_simp <- boot_ci(ramdat, n = 9999, total = TRUE, 
+                      parallel = "multicore", ncpus = 4L))
+
+# By Population:
+set.seed(9001)
+system.time(zone_simp <- boot_ci(setpop(ramdat, ~ZONE2), n = 9999, total = TRUE, 
+                      parallel = "multicore", ncpus = 4L))
+```
+
+```{r, add_ci}
+
+write.table(add_ci(GDxYear, year_simp, colString = "-")[-nrow(GDxYear), -length(GDxYear)], 
+            file = "GD.csv", 
+            na = "-",
+            row.names = FALSE,
+            sep = ",", col.names = TRUE)
+write.table(add_ci(GDxRegion, zone_simp, colString = "-")[-length(GDxYear)],
+            file = "GD.csv", 
+            na = "-",
+            row.names = FALSE,
+            sep = ",", col.names = FALSE, append = TRUE)
+
+```
+
+
+Allelic and Genotypic diversity per locus
+--------
+
+```{r, locus_stuff, cache = TRUE, fig.width = 10, fig.height = 10}
+(loc_whole <- locus_table(ramdat)) # Whole data set
+(loc_geno  <- locus_table(clonecorrect(ramdat, hier = NA))) # By genotype
+
+
+loc_year_allele <- calc_loc_table(ramdat, ~Pop/ZONE2)
+(lya <- plot_loc_table(loc_year_allele) + 
+   ggtitle("Allelic Diversity") + labs(list(x = "Year", fill = "Year")))
+
+loc_year_geno <- calc_loc_table(ramdat, ~Pop/ZONE2, lev = "genotype")
+(lyg <- plot_loc_table(loc_year_geno) + 
+   ggtitle("Genotype Diversity") + labs(list(x = "Year", fill = "Year")))
+
+loc_region_allele <- calc_loc_table(ramdat, ~ZONE2)
+(lya <- plot_loc_table(loc_region_allele) + 
+   ggtitle("Allelic Diversity") + labs(list(x = "Region", fill = "Region")))
+
+loc_region_geno <- calc_loc_table(ramdat, ~ZONE2, lev = "genotype")
+(lyg <- plot_loc_table(loc_region_geno) + 
+   ggtitle("Genotype Diversity") + labs(list(x = "Region", fill = "Region")))
+```
+
+```{r, create_tables}
+loc_region_allele_summary <- melt(loc_region_allele) %>% 
+  filter(locus == "mean") %>% 
+  mutate(region = ifelse(L1 == "pops", L2, L1)) %>% 
+  select(locus, summary, value, region) %>% 
+  dcast(region ~ summary) %>%
+  arrange(region)
+loc_year_allele_summary <- melt(loc_year_allele) %>% 
+  filter(locus == "mean") %>% 
+  mutate(year = ifelse(L1 == "pops", L2, L1)) %>% 
+  select(locus, summary, value, year) %>% 
+  dcast(year ~ summary)
+```
+
+```{r, print_tables, results = "asis", echo = FALSE}
+cat("### Tables\n")
+cat("#### Mean Allelic Diversity by Region\n")
+knitr::kable(loc_region_allele_summary)
+
+cat("\n#### Mean Allelic Diversity by Year\n")
+knitr::kable(loc_year_allele_summary)
+
+cat("\n#### Total Allelic Diversity\n")
+knitr::kable(loc_geno)
+```
+
+
+
+AMOVA
+-----
+
+### Including within individual variance
+
+#### Year/Region
+```{r, AMOVA, cache=TRUE}
+namehierarchy(ramdat) <- ~Year/ZONE2/ZONE1
+
+(year_z2   <- poppr.amova(ramdat, ~Year/ZONE2))
+(year_z2cc <- poppr.amova(ramdat, ~Year/ZONE2, clonecorrect = TRUE))
+
+set.seed(9001)
+system.time(year_z2.t <- randtest(year_z2, nrepet = 999))
+plot(year_z2.t)
+set.seed(9001)
+system.time(year_z2cc.t <- randtest(year_z2cc, nrepet = 999))
+plot(year_z2cc.t)
+date()
+```
+
+#### Region/Year
+
+```{r, AMOVAzy, cache=TRUE}
+namehierarchy(ramdat) <- ~Year/ZONE2/ZONE1
+
+(z2_year   <- poppr.amova(ramdat, ~ZONE2/Year))
+(z2_yearcc <- poppr.amova(ramdat, ~ZONE2/Year, clonecorrect = TRUE))
+
+set.seed(9001)
+system.time(z2_year.t <- randtest(z2_year, nrepet = 999))
+plot(z2_year.t)
+set.seed(9001)
+system.time(z2_yearcc.t <- randtest(z2_yearcc, nrepet = 999))
+plot(z2_yearcc.t)
+date()
+```
+
+### Excluding within individual variance
+
+#### Year/Region
+```{r, AMOVA_WF, cache=TRUE}
+namehierarchy(ramdat) <- ~Year/ZONE2/ZONE1
+
+(WF_year_z2   <- poppr.amova(ramdat, ~Year/ZONE2, within = FALSE))
+(WF_year_z2cc <- poppr.amova(ramdat, ~Year/ZONE2, clonecorrect = TRUE, 
+                          within = FALSE))
+
+set.seed(9001)
+system.time(WF_year_z2.t <- randtest(WF_year_z2, nrepet = 9999))
+plot(WF_year_z2.t)
+set.seed(9001)
+system.time(WF_year_z2cc.t <- randtest(WF_year_z2cc, nrepet = 9999))
+plot(WF_year_z2cc.t)
+date()
+```
+
+#### Region/Year
+```{r, AMOVAzy_WF, cache=TRUE}
+namehierarchy(ramdat) <- ~Year/ZONE2/ZONE1
+
+(WF_z2_year   <- poppr.amova(ramdat, ~ZONE2/Year, within = FALSE))
+(WF_z2_yearcc <- poppr.amova(ramdat, ~ZONE2/Year, clonecorrect = TRUE, 
+                          within = FALSE))
+
+set.seed(9001)
+system.time(WF_z2_year.t <- randtest(WF_z2_year, nrepet = 9999))
+plot(WF_z2_year.t)
+set.seed(9001)
+system.time(WF_z2_yearcc.t <- randtest(WF_z2_yearcc, nrepet = 9999))
+plot(WF_z2_yearcc.t)
+date()
+```
+
+### Writing tables
+```{r}
+z2year_table   <- make_amova_table(WF_z2_year, WF_z2_year.t)
+z2yearcc_table <- make_amova_table(WF_z2_yearcc, WF_z2_yearcc.t)
+(z2year_full_table <- make_amova_printable(z2year_table, z2yearcc_table))
+write.table(z2year_full_table, file = "zone_by_year.csv", row.names = TRUE,
+            col.names = NA, sep = ",")
+
+yearz2_table   <- make_amova_table(WF_year_z2, WF_year_z2.t)
+yearz2cc_table <- make_amova_table(WF_year_z2cc, WF_year_z2cc.t)
+(yearz2_full_table <- make_amova_printable(yearz2_table, yearz2cc_table))
+write.table(yearz2_full_table, file = "year_by_zone.csv", row.names = TRUE,
+            col.names = NA, sep = ",")
+```
+
+
+### Without Cape Sebastian or Pistol River South Fork
+
+```{r, noseb, cache = TRUE}
+noseb <- popsub(setpop(ramdat, ~ZONE2), blacklist = "HunterCr")
+
+system.time(noseb_year_z2   <- poppr.amova(noseb, ~Year/ZONE2))
+system.time(noseb_year_z2cc <- poppr.amova(noseb, ~Year/ZONE2, clonecorrect = TRUE))
+
+set.seed(9001)
+system.time(noseb_year_z2.t <- randtest(noseb_year_z2, nrepet = 999))
+plot(noseb_year_z2.t)
+set.seed(9001)
+system.time(noseb_year_z2cc.t <- randtest(noseb_year_z2cc, nrepet = 999))
+plot(noseb_year_z2cc.t)
+date()
+
+```
+
+
+```{r, nosebzy, cache = TRUE}
+noseb <- popsub(setpop(ramdat, ~ZONE2), blacklist = "HunterCr")
+
+system.time(noseb_z2_year   <- poppr.amova(noseb, ~ZONE2/Year))
+system.time(noseb_z2_yearcc <- poppr.amova(noseb, ~ZONE2/Year, clonecorrect = TRUE))
+
+set.seed(9001)
+system.time(noseb_z2_year.t <- randtest(noseb_z2_year, nrepet = 999))
+plot(noseb_z2_year.t)
+set.seed(9001)
+system.time(noseb_z2_yearcc.t <- randtest(noseb_z2_yearcc, nrepet = 999))
+plot(noseb_z2_yearcc.t)
+date()
+
+```
+
+
+```{r, nosebpr, cache = TRUE}
+nosebpr <- selPopSize(noseb, n = 10)
+
+system.time(nosebpr_year_z2   <- poppr.amova(nosebpr, ~Year/ZONE2))
+system.time(nosebpr_year_z2cc <- poppr.amova(nosebpr, ~Year/ZONE2, clonecorrect = TRUE))
+
+set.seed(9001)
+system.time(nosebpr_year_z2.t <- randtest(nosebpr_year_z2, nrepet = 999))
+plot(nosebpr_year_z2.t)
+set.seed(9001)
+system.time(nosebpr_year_z2cc.t <- randtest(nosebpr_year_z2cc, nrepet = 999))
+plot(nosebpr_year_z2cc.t)
+
+
+```
+
+```{r, nosebprzy, cache = TRUE}
+nosebpr <- selPopSize(noseb, n = 10)
+
+system.time(nosebpr_z2_year   <- poppr.amova(nosebpr, ~ZONE2/Year))
+system.time(nosebpr_z2_yearcc <- poppr.amova(nosebpr, ~ZONE2/Year, clonecorrect = TRUE))
+
+set.seed(9001)
+system.time(nosebpr_z2_year.t <- randtest(nosebpr_z2_year, nrepet = 999))
+plot(nosebpr_z2_year.t)
+set.seed(9001)
+system.time(nosebpr_z2_yearcc.t <- randtest(nosebpr_z2_yearcc, nrepet = 999))
+plot(nosebpr_z2_yearcc.t)
+
+
+```
+
+### Excluding individual variance and Cape Sebastian/PRSF
+
+#### Year/Region
+```{r, nosebpr_AMOVA_WF, cache=TRUE}
+nosebpr <- resetMLG(nosebpr)
+
+(nosebpr_WF_year_z2   <- poppr.amova(nosebpr, ~Year/ZONE2, within = FALSE))
+(nosebpr_WF_year_z2cc <- poppr.amova(nosebpr, ~Year/ZONE2, clonecorrect = TRUE, 
+                          within = FALSE))
+
+set.seed(9001)
+system.time(nosebpr_WF_year_z2.t <- randtest(nosebpr_WF_year_z2, nrepet = 9999))
+plot(nosebpr_WF_year_z2.t)
+set.seed(9001)
+system.time(nosebpr_WF_year_z2cc.t <- randtest(nosebpr_WF_year_z2cc, nrepet = 9999))
+plot(nosebpr_WF_year_z2cc.t)
+date()
+```
+
+#### Region/Year
+```{r, nosebpr_AMOVAzy_WF, cache=TRUE}
+namehierarchy(nosebpr) <- ~Year/ZONE2/ZONE1
+
+(nosebpr_WF_z2_year   <- poppr.amova(nosebpr, ~ZONE2/Year, within = FALSE))
+(nosebpr_WF_z2_yearcc <- poppr.amova(nosebpr, ~ZONE2/Year, clonecorrect = TRUE, 
+                          within = FALSE))
+
+set.seed(9001)
+system.time(nosebpr_WF_z2_year.t <- randtest(nosebpr_WF_z2_year, nrepet = 9999))
+plot(nosebpr_WF_z2_year.t)
+set.seed(9001)
+system.time(nosebpr_WF_z2_yearcc.t <- randtest(nosebpr_WF_z2_yearcc, nrepet = 9999))
+plot(nosebpr_WF_z2_yearcc.t)
+date()
+```
+
+```{r}
+nosebpr_z2year_table   <- make_amova_table(nosebpr_WF_z2_year, nosebpr_WF_z2_year.t)
+nosebpr_z2yearcc_table <- make_amova_table(nosebpr_WF_z2_yearcc, nosebpr_WF_z2_yearcc.t)
+(nosebpr_z2year_full_table <- make_amova_printable(nosebpr_z2year_table, nosebpr_z2yearcc_table))
+write.table(nosebpr_z2year_full_table, file = "nosebpr_zone_by_year.csv", row.names = TRUE,
+            col.names = NA, sep = ",")
+
+nosebpr_yearz2_table   <- make_amova_table(nosebpr_WF_year_z2, nosebpr_WF_year_z2.t)
+nosebpr_yearz2cc_table <- make_amova_table(nosebpr_WF_year_z2cc, nosebpr_WF_year_z2cc.t)
+(nosebpr_yearz2_full_table <- make_amova_printable(nosebpr_yearz2_table, nosebpr_yearz2cc_table))
+write.table(nosebpr_yearz2_full_table, file = "nosebpr_year_by_zone.csv", row.names = TRUE,
+            col.names = NA, sep = ",")
+```
+
+### Without the coast, cape sebastian, or PRSF
+#### Year/Region
+```{r, nosebprc_AMOVA_WF, cache=TRUE}
+nosebprc <- popsub(setpop(nosebpr, ~ZONE2), blacklist = "Coast")
+nosebprc <- resetMLG(nosebprc)
+
+(nosebprc_WF_year_z2   <- poppr.amova(nosebprc, ~Year/ZONE2, within = FALSE))
+(nosebprc_WF_year_z2cc <- poppr.amova(nosebprc, ~Year/ZONE2, clonecorrect = TRUE, 
+                          within = FALSE))
+
+set.seed(9001)
+system.time(nosebprc_WF_year_z2.t <- randtest(nosebprc_WF_year_z2, nrepet = 9999))
+plot(nosebprc_WF_year_z2.t)
+set.seed(9001)
+system.time(nosebprc_WF_year_z2cc.t <- randtest(nosebprc_WF_year_z2cc, nrepet = 9999))
+plot(nosebprc_WF_year_z2cc.t)
+date()
+```
+
+#### Region/Year
+```{r, nosebprc_AMOVAzy_WF, cache=TRUE}
+namehierarchy(nosebprc) <- ~Year/ZONE2/ZONE1
+
+(nosebprc_WF_z2_year   <- poppr.amova(nosebprc, ~ZONE2/Year, within = FALSE))
+(nosebprc_WF_z2_yearcc <- poppr.amova(nosebprc, ~ZONE2/Year, clonecorrect = TRUE, 
+                          within = FALSE))
+
+set.seed(9001)
+system.time(nosebprc_WF_z2_year.t <- randtest(nosebprc_WF_z2_year, nrepet = 9999))
+plot(nosebprc_WF_z2_year.t)
+set.seed(9001)
+system.time(nosebprc_WF_z2_yearcc.t <- randtest(nosebprc_WF_z2_yearcc, nrepet = 9999))
+plot(nosebprc_WF_z2_yearcc.t)
+date()
+```
+
+```{r}
+nosebprc_z2year_table   <- make_amova_table(nosebprc_WF_z2_year, nosebprc_WF_z2_year.t)
+nosebprc_z2yearcc_table <- make_amova_table(nosebprc_WF_z2_yearcc, nosebprc_WF_z2_yearcc.t)
+(nosebprc_z2year_full_table <- make_amova_printable(nosebprc_z2year_table, nosebprc_z2yearcc_table))
+write.table(nosebprc_z2year_full_table, file = "nosebprc_zone_by_year.csv", row.names = TRUE,
+            col.names = NA, sep = ",")
+
+nosebprc_yearz2_table   <- make_amova_table(nosebprc_WF_year_z2, nosebprc_WF_year_z2.t)
+nosebprc_yearz2cc_table <- make_amova_table(nosebprc_WF_year_z2cc, nosebprc_WF_year_z2cc.t)
+(nosebprc_yearz2_full_table <- make_amova_printable(nosebprc_yearz2_table, nosebprc_yearz2cc_table))
+write.table(nosebprc_yearz2_full_table, file = "nosebprc_year_by_zone.csv", row.names = TRUE,
+            col.names = NA, sep = ",")
+```
+
+
+
+### Pairwise AMOVA Between Regions
+
+While presenting the AMOVA results, Ebba brought up a very good point that the more recently introduced regions might be biasing the AMOVA results. To assess which regions might have differentiation in a pairwise fashion, a pairwise AMOVA is being run on regions comparing both regions separately per year. 
+
+#### Running the AMOVA by zone
+```{r, pair_amova_by_zone, cache = TRUE}
+zonePairs    <- pairwise_amova(setpop(ramdat, ~ZONE2), ~ZONE2/Year, quiet = TRUE)
+zonePairs.cc <- pairwise_amova(setpop(ramdat, ~ZONE2), ~ZONE2/Year, 
+                                quiet = TRUE, clonecorrect = TRUE)
+```
+
+
+```{r, test_amova_by_zone, cache = TRUE}
+set.seed(9001) #
+system.time(zonePairs.t    <- pairwise_amova_test(zonePairs, nrepet = 999))
+set.seed(9001)
+system.time(zonePairs.cc.t <- pairwise_amova_test(zonePairs.cc, nrepet = 999))
+```
+
+#### Running the AMOVA by year
+```{r, pair_amova_by_year, cache = TRUE}
+yearPairs    <- pairwise_amova(setpop(ramdat, ~Year), ~Year/ZONE2, quiet = TRUE)
+yearPairs.cc <- pairwise_amova(setpop(ramdat, ~Year), ~Year/ZONE2, 
+                                quiet = TRUE, clonecorrect = TRUE)
+```
+
+```{r, test_amova_by_year, cache = TRUE}
+set.seed(9001)
+system.time(yearPairs.t    <- pairwise_amova_test(yearPairs, nrepet = 999))
+set.seed(9001)
+system.time(yearPairs.cc.t <- pairwise_amova_test(yearPairs.cc, nrepet = 999))
+```
+
+Pairwise Heatmaps
+-------
+
+### By region
+```{r, plot_amova_pvals, fig.width = 10, fig.height = 10}
+names(zonePairs.t)    <- names(zonePairs)
+names(zonePairs.cc.t) <- names(zonePairs.cc)
+parray <- array(dim = c(length(zonePairs.t[[1]]$pvalue),
+                        length(zonePairs.t),
+                        2),
+                dimnames = list(Test = zonePairs.t[[1]]$names,
+                                Pair = names(zonePairs.t),
+                                data = c("full", "clone-censored"))
+                )
+parray[, , "full"]           <- vapply(zonePairs.t, getpval,
+                                       zonePairs.t[[1]]$pvalue)
+
+parray[, , "clone-censored"] <- vapply(zonePairs.cc.t, getpval,
+                                       zonePairs.cc.t[[1]]$pvalue)
+
+phiarray <- array(dim = c(length(getphi(zonePairs[[1]])),
+                        length(zonePairs),
+                        2),
+                dimnames = list(Test = rownames(zonePairs[[1]]$statphi),
+                                Pair = names(zonePairs),
+                                data = c("full", "clone-censored"))
+                )
+phiarray[, , "full"]           <- vapply(zonePairs, getphi,
+                                         getphi(zonePairs[[1]]))
+
+phiarray[, , "clone-censored"] <- vapply(zonePairs.cc, getphi,
+                                         getphi(zonePairs.cc[[1]]))
+
+
+
+p.df <- tbl_df(melt(parray[3:4, , ])) %>% 
+  separate(Pair, c("PairOne", "PairTwo"), sep = " : ")
+
+# Fixing the data so it appaears as an upper-triangle
+setpop(ramdat) <- ~ZONE2
+p.df$PairOne <- refactor(p.df$PairOne, pop(ramdat))
+p.df$PairTwo <- refactor(p.df$PairTwo, pop(ramdat))
+# p.df$PairOne <- unique(pop(ramdat))[match(p.df$PairOne, unique(pop(ramdat)))]
+# p.df$PairTwo <- unique(pop(ramdat))[match(p.df$PairTwo, unique(pop(ramdat)))]
+levels(p.df$Test) <- paste("variations between", c("year within region", "regions"))
+
+# Plotting
+ggplot(p.df, aes(x = PairTwo, y = PairOne, fill = -log(value))) + 
+  geom_tile() + 
+  geom_text(aes(label = value, color = value)) +
+  facet_grid(data ~ Test) + 
+  scale_fill_continuous(low = "black", high = "orange", name = "p value\n",
+                        breaks = c(0.693, 3, 4.6, 6.7),
+                        labels = round(exp(-c(0.693, 3, 4.6, 6.8)), 3)
+                        ) +
+  scale_color_continuous(low = "black", high = "orange", guide = "none") +
+  theme_classic() + myTheme + labs(list(x = NULL, y = NULL))
+
+# Creating a matrix to store Phi values
+phi <- matrix(nrow = nlevels(p.df$PairOne), ncol = nlevels(p.df$PairOne), 
+              dimnames = list(levels(p.df$PairOne), levels(p.df$PairOne)))
+p   <- phi
+phi[lower.tri(phi)] <- phiarray[4, , 2] # Clone corrected (upper triangle)
+phi <- t(phi) # Transposition to final form
+phi[lower.tri(phi)] <- phiarray[4, , 1] # Raw data (lower triangle)
+phi
+p[lower.tri(p)]     <- parray[4, , 2]
+p <- t(p)
+p[lower.tri(p)]     <- parray[4, , 1]
+p
+write.table(phi, file = "phi_by_zone.csv", sep = ",", row.names = TRUE,
+            col.names = NA)
+```
+
+
+### By year
+
+
+```{r, plot_amova_pvals_year, fig.width = 15, fig.height = 15}
+names(yearPairs.t)    <- names(yearPairs)
+names(yearPairs.cc.t) <- names(yearPairs.cc)
+parray_year <- array(dim = c(length(yearPairs.t[[1]]$pvalue),
+                        length(yearPairs.t),
+                        2),
+                dimnames = list(Test = yearPairs.t[[1]]$names,
+                                Pair = names(yearPairs.t),
+                                data = c("full", "clone-censored"))
+                )
+
+parray_year[, , "full"]           <- vapply(yearPairs.t, getpval, 
+                                            yearPairs.t[[1]]$pvalue)
+
+parray_year[, , "clone-censored"] <- vapply(yearPairs.cc.t, getpval,
+                                            yearPairs.cc.t[[1]]$pvalue)
+
+phiarray_year <- array(dim = c(length(getphi(yearPairs[[1]])),
+                        length(yearPairs),
+                        2),
+                dimnames = list(Test = rownames(yearPairs[[1]]$statphi),
+                                Pair = names(yearPairs),
+                                data = c("full", "clone-censored"))
+                )
+phiarray_year[, , "full"]           <- vapply(yearPairs, getphi,
+                                         getphi(yearPairs[[1]]))
+
+phiarray_year[, , "clone-censored"] <- vapply(yearPairs.cc, getphi,
+                                         getphi(yearPairs.cc[[1]]))
+
+py.df <- tbl_df(melt(parray_year[3:4, , ])) %>% 
+  separate(Pair, c("PairOne", "PairTwo"), sep = " : ")
+
+# Fixing the data so it appaears as an upper-triangle
+setpop(ramdat) <- ~Year
+py.df$PairOne <- refactor(py.df$PairOne, pop(ramdat))
+py.df$PairTwo <- refactor(py.df$PairTwo, pop(ramdat))
+# py.df$PairOne <- unique(pop(ramdat))[match(py.df$PairOne, unique(pop(ramdat)))]
+# py.df$PairTwo <- unique(pop(ramdat))[match(py.df$PairTwo, unique(pop(ramdat)))]
+levels(py.df$Test) <- paste("variations between", c("regions within years", "years"))
+
+# Plotting
+ggplot(py.df, aes(x = PairTwo, y = PairOne, fill = -log(value))) + 
+  geom_tile() + 
+  geom_text(aes(label = value, color = value)) +
+  facet_grid(data ~ Test) + 
+  scale_fill_continuous(low = "black", high = "orange", name = "p value\n",
+                        breaks = c(0.693, 3, 4.6, 6.7),
+                        labels = round(exp(-c(0.693, 3, 4.6, 6.8)), 3)
+                        ) +
+  scale_color_continuous(low = "black", high = "orange", guide = "none") +
+  theme_classic() + myTheme + labs(list(x = NULL, y = NULL))
+
+phi_year <- matrix(nrow = nlevels(py.df$PairOne), ncol = nlevels(py.df$PairOne), 
+              dimnames = list(levels(py.df$PairOne), levels(py.df$PairOne)))
+
+phi_year[lower.tri(phi_year)] <- phiarray_year[4, , 2]
+phi_year <- t(phi_year)
+phi_year[lower.tri(phi_year)] <- phiarray_year[4, , 1]
+phi_year
+write.table(phi_year, file = "phi_by_year.csv", sep = ",", row.names = TRUE,
+            col.names = NA)
+```
+

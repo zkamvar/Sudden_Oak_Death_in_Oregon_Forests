@@ -1,0 +1,305 @@
+---
+title: "Minimum Spanning Networks"
+author: "Zhian N. Kamvar"
+date: "September 29, 2014"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Purpose
+-------
+
+This document will explore the distribution of MLGs across years as well as
+filtering strategies.
+
+Required packages and data
+--------
+
+```{r}
+library(PramCurry)
+library(reshape2)
+library(ggplot2)
+library(ape)
+library(poppr)
+library(adegenet)
+library(igraph)
+library(animation)
+options(stringsAsFactors = FALSE)
+data(ramdat)
+data(pop_data)
+data(myPal)
+sessionInfo()
+```
+
+Full MSN
+-------
+
+First thing to do is to create the full MSN across years. Note that the get_layout
+function will preserve the layout ("MASTER") so that it can be subsetted.
+
+```{r, fig.width = 10, fig.height = 10}
+setpop(ramdat) <- ~ZONE2
+options(digits = 10)
+(newReps <- other(ramdat)$REPLEN)
+newReps[3] <- 4
+(newReps <- fix_replen(ramdat, newReps))
+
+b.msn.full <- bruvo.msn(ramdat, replen = newReps, showplot = FALSE,
+                        include.ties = TRUE)
+
+goodSeed <- 19
+goodSeed2 <- 17
+goodSeedAlt <- 14
+# for (i in goodSeed:100){
+  set.seed(goodSeed)
+#   set.seed(i)
+  MASTER <- get_layout(b.msn.full$graph)
+  plot_poppr_msn(ramdat, b.msn.full, gad = 10, palette = funky, mlg = TRUE, 
+                 layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+                 quantiles = FALSE,
+                 vertex.label.color = "firebrick", inds = "none")
+#   prompt <- paste("save", i, "as seed?")
+#   accept <- readline(prompt)
+#   if (substr(accept, 1, 1) == "y"){
+#     theSeed <- i
+#     break
+#   }
+# }
+```
+
+MSN per year
+-------
+
+Now we will see how the MSNs are plotted per year. For this, we will do two 
+things: 
+
+1. color the nodes based on the full MSN 
+2. ensure that the node coordinates are equal
+
+```{r, fig.width = 10, fig.height = 10}
+
+saveGIF({
+  plot_poppr_msn(ramdat, b.msn.full, gad = 10, palette = funky, mlg = TRUE, 
+                   layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+                   quantiles = FALSE,
+                   vertex.label.color = "firebrick")
+  
+  for (i in levels(pop(ramdat))){
+    population_subgraph(ramdat, b.msn.full, 
+                        quantiles = FALSE,
+                        gad = 10, 
+                        palette = funky, 
+                        mlg = TRUE, 
+                        layfun = MASTER, 
+                        nodebase = 1.75, 
+                        vertex.label.font = 2,
+                        cutoff = 0.148,
+                        nodelab = 1000,
+                        vertex.label.color = "firebrick",
+                        sublist = i)
+  }
+}, movie.name = "by_year.gif", interval = 1, ani.height = 1000, ani.width = 1000)
+
+# pdf("by_year.pdf", width = 10, height = 10)
+plot_poppr_msn(ramdat, b.msn.full, gad = 10, palette = funky, mlg = TRUE, 
+                 layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+                 quantiles = FALSE,
+                 vertex.label.color = "firebrick")
+
+for (i in levels(pop(ramdat))){
+  population_subgraph(ramdat, b.msn.full, 
+                      quantiles = FALSE,
+                      gad = 10, 
+                      palette = funky, 
+                      mlg = TRUE, 
+                      layfun = MASTER, 
+                      nodebase = 1.75, 
+                      vertex.label.font = 2,
+                      cutoff = 0.148,
+                      nodelab = 1000,
+                      vertex.label.color = "firebrick",
+                      sublist = i)
+}
+# dev.off()
+
+# Just to see once more with only allowing 1 mutational step for Bruvo's distance
+plot_poppr_msn(ramdat, b.msn.full,
+               quantiles = FALSE,
+               gad = 10, 
+               palette = funky,
+               mlg = TRUE, 
+               layfun = MASTER, 
+               nodebase = 1.75, 
+               vertex.label.font = 2,
+               cutoff = 0.051,
+               vertex.label.color = "firebrick")
+```
+
+ZONE 1
+------
+
+```{r, fig.width = 10, fig.height = 10}
+setpop(ramdat) <- ~ZONE1
+# zonePal <- get_year_pal(ramdat)
+b.msn.zone1 <- bruvo.msn(ramdat, replen = newReps, showplot = FALSE,
+                        include.ties = TRUE)
+```
+
+```{r, fig.width = 10, fig.height = 10}
+plot_poppr_msn(ramdat, 
+               b.msn.zone1, 
+               gadj = 10, 
+               palette = funky, 
+               mlg = TRUE, 
+               layfun = MASTER, 
+               nodebase = 1.75, 
+               vertex.label.font = 2,
+               quantiles = FALSE,
+               vertex.label.color = "firebrick")
+
+for (i in levels(pop(ramdat))){
+  population_subgraph(ramdat, 
+                      b.msn.zone1, 
+                      quantiles = FALSE,
+                      gad = 10, 
+                      palette = funky, 
+                      mlg = TRUE, 
+                      layfun = MASTER,
+                      nodebase = 1.75, 
+                      vertex.label.font = 2,
+                      cutoff = 0.148,
+                      vertex.label.color = "firebrick",
+                      sublist = i,
+                      nodelab = 1000,
+                      inds = "none")
+}
+```
+
+ZONE 2
+------
+
+```{r, fig.width = 10, fig.height = 10}
+setpop(ramdat) <- ~ZONE2
+# zonePal <- get_year_pal(ramdat)
+b.msn.zone <- bruvo.msn(ramdat, replen = newReps, showplot = FALSE,
+                        include.ties = TRUE)
+
+zdegs <- igraph::degree(b.msn.zone$graph)
+names(zdegs) <- igraph::V(b.msn.zone$graph)$label
+sort(zdegs)
+edges_to_remove <- E(b.msn.zone$graph)[E(b.msn.zone$graph)$weight > 0.05]
+clusts <- clusters(delete.edges(b.msn.zone$graph, edges_to_remove))
+(names(clusts$membership) <- V(b.msn.zone$graph)$label)
+
+clustPal  <- clusts$csize
+theClusts <- clustPal > 3
+clustOrder <- order(clustPal, decreasing = TRUE)
+clustPal[clustOrder][theClusts[clustOrder]]   <- RColorBrewer::brewer.pal(sum(theClusts), "Set1")
+clustPal[clustOrder][!theClusts[clustOrder]]  <- gray.colors(sum(!theClusts))
+nodeList <- lapply(1:length(clustPal), function(x) which(clusts$membership == x))
+
+
+# saveGIF({
+  
+  plot_poppr_msn(ramdat, b.msn.zone, gad = 10, palette = funky, mlg = TRUE, 
+                 layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+                 quantiles = FALSE,
+                 vertex.label.color = "firebrick",
+                 mark.groups = nodeList[theClusts], 
+                 mark.border = clustPal[theClusts],
+                 mark.col = transp(clustPal[theClusts], 0.05),
+                 mark.expand = 2,
+                 mark.shape = 0)
+  for (i in levels(pop(ramdat))){
+    population_subgraph(ramdat, 
+                        b.msn.zone, 
+                        gadj = 10,
+                        palette = funky, 
+                        mlg = TRUE,
+                        layfun = MASTER,
+                        nodebase = 1.75,
+                        vertex.label.font = 2,
+                        quantiles = FALSE,
+                        vertex.label.color = "firebrick",
+                        sublist = i, 
+                        inds = "none",
+                        nodelab = 1000)
+  }
+  
+# }, movie.name = "by_zone2.gif", interval = 1, ani.height = 1000, ani.width = 1000)
+
+mainMLGs <- order(table(ramdat@mlg), decreasing = TRUE)[1:10]
+
+pdf("by_zone2.pdf", width = 352/2.54/10, height = 352/2.54/10, pointsize = 40)
+plot_poppr_msn(ramdat, b.msn.zone, gad = 10, palette = funky, mlg = TRUE, 
+               layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+               quantiles = FALSE, 
+#                inds = mainMLGs, nodelab = 1000,
+               vertex.label.color = "firebrick",
+               mark.groups = nodeList[theClusts], 
+               mark.border = clustPal[theClusts],
+               mark.col = transp(clustPal[theClusts], 0.05),
+               mark.expand = 2,
+               mark.shape = 0)
+for (i in levels(pop(ramdat))){
+  population_subgraph(ramdat, 
+                      b.msn.zone, 
+                      gadj = 10,
+                      palette = funky, 
+                      mlg = TRUE,
+                      layfun = MASTER,
+                      nodebase = 1.75,
+                      vertex.label.font = 2,
+                      quantiles = FALSE,
+                      vertex.label.color = "firebrick",
+                      sublist = i, 
+                      inds = "none",
+                      nodelab = 1000)
+}
+dev.off()
+```
+
+
+By ZONE2 and Year
+--------
+
+
+```{r, fig.width = 10, fig.height = 10}
+zone2pal <- char2pal(setpop(ramdat, ~ZONE2)@pop.names, funky)
+setpop(ramdat) <- ~ZONE2/Pop
+zone2yearpal <- zone2pal[sub("_.+?$", "", ramdat@pop.names)]
+names(zone2yearpal) <- ramdat@pop.names
+# zonePal <- get_year_pal(ramdat)
+b.msn.zone.year <- bruvo.msn(ramdat, replen = newReps, showplot = FALSE,
+                        include.ties = TRUE)
+# saveGIF({
+# pdf("by_zone2year.pdf", width = 10, height = 10)
+  plot_poppr_msn(ramdat, b.msn.zone.year, gad = 10, palette = funky, mlg = TRUE, 
+               layfun = MASTER, nodebase = 1.75, vertex.label.font = 2,
+               quantiles = FALSE,
+               vertex.label.color = "firebrick")
+  for (i in sort(levels(pop(ramdat)))){
+    population_subgraph(ramdat, 
+                        b.msn.zone.year, 
+                        gadj = 10,
+                        mlg = TRUE,
+                        layfun = MASTER,
+                        nodebase = 1.75,
+                        vertex.label.font = 2,
+                        quantiles = FALSE,
+                        palette = funky,
+                        vertex.label.color = "firebrick",
+                        sublist = i, 
+                        inds = "none",
+                        nodelab = 1000,
+                        main = paste("\n\n", i))
+  }
+# dev.off()
+# }, movie.name = "by_zone2year.gif", 
+# interval = 1, ani.height = 1000, ani.width = 1000)
+```
+
