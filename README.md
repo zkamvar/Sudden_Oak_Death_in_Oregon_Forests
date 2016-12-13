@@ -17,16 +17,16 @@ describing each analysis.
 
 |File|Description|
 |----|----|
-|**DAPC**|Discriminant analysis of principal components over forest data.|
-|**Diversity_stats**|file with genotypic, genotype, and allelic diversity. This includes AMOVA analysis|
-|**ForestNursery**|Analyzing the combined forest and nursery data.|
-|**Gst**|Calculating $G_{st}$ values for the data set|
-|**Gst_clonecorrect**|Calculating $G_{st}$ values for clone corrected data.|
-|**Mantel**|Analyzing correlations between space and genotype with mantel tests and linear models.|
-|**maps**| plotting multilocus genotypes onto maps. Note: the output is not kept in the online repository as the file size with all the images becomes too large to host freely on github.|
-|**mlg_distribution**| Displaying the distribution of multilocus genotypes in the data. |
-|**msn**| Displays minimum spanning networks based off of Bruvo's distance. |
-|**Pop_structure**|dendrograms of populations based on Nei's distance.|
+|[**DAPC**](DAPC.Rmd)|Discriminant analysis of principal components over forest data.|
+|[**Diversity_stats**](Diversity_stats.Rmd)|file with genotypic, genotype, and allelic diversity. This includes AMOVA analysis|
+|[**ForestNursery**](ForestNursery.Rmd)|Analyzing the combined forest and nursery data.|
+|[**Gst**](Gst.Rmd)|Calculating $G_{st}$ values for the data set|
+|[**Gst_clonecorrect**](Gst_clonecorrect.Rmd)|Calculating $G_{st}$ values for clone corrected data.|
+|[**Mantel**](Mantel.Rmd)|Analyzing correlations between space and genotype with mantel tests and linear models.|
+|[**maps**](maps.Rmd)| plotting multilocus genotypes onto maps. Note: the output is not kept in the online repository as the file size with all the images becomes too large to host freely on github.|
+|[**mlg_distribution**](mlg_distribution.Rmd)| Displaying the distribution of multilocus genotypes in the data. |
+|[**msn**](msn.Rmd)| Displays minimum spanning networks based off of Bruvo's distance. |
+|[**Pop_structure**](Pop_structure.Rmd)|dendrograms of populations based on Nei's distance.|
 
 R package
 =========
@@ -60,7 +60,7 @@ Misc
 
 ### Shapefiles
 
-A folder called `shapefiles/` contains all of the shapefiles necessary to
+A folder called [`shapefiles/`](shapefiles) contains all of the shapefiles necessary to
 produce figure 1.
 
 ### Packrat
