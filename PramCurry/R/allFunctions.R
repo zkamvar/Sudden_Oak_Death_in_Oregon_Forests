@@ -1086,7 +1086,7 @@ make_amova_table <- function(am, amt){
   res <- data.frame(list(am$results[-tot, c("Df", "Sum Sq")], 
                          Percent = am$componentsofcovariance[-tot, 2],
                          Pval    = rev(amt$pvalue), 
-                         Phi     = am$statphi$Phi[-tot]))
+                         Phi     = rev(am$statphi$Phi[-tot])))
   res <- as.matrix(res)
   colnames(res) <- c("d.f.", "Sum of Squares", "Percent variation", "P", 
                      "Phi statistic")
